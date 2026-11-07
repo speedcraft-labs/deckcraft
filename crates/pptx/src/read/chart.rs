@@ -291,8 +291,16 @@ fn read_error_bars(s: &El, kind: ChartType, budget: &mut usize) -> Option<ErrorB
 /// setting); the first series with categories sets `categories`.
 fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categories: &mut Vec<String>, budget: &mut usize) -> Series {
     let (kind, secondary, group_labels) = group;
+    let name = s.child("tx").map(|t| strings(t, budget)).and_then(|v| v.into_iter().next()).unwrap_or_default();
+    let series_categories = s.child("cat").or_else(|| s.child("xVal")).map(|cat| strings(cat, budget)).unwrap_or_default();
+    if categories.is_empty() {
+        *categories = series_categories.clone();
+    }
+    let value_data = s.child("val").or_else(|| s.child("yVal")).map(|v| numbers(v, budget)).unwrap_or_default();
+    let label_categories = if series_categories.is_empty() { categories.as_slice() } else { series_categories.as_slice() };
+    let custom_labels = read_custom_labels(s, &name, &value_data, label_categories);
     let mut ser = Series {
-        name: s.child("tx").map(|t| strings(t, budget)).and_then(|v| v.into_iter().next()).unwrap_or_default(),
+        name,
         fill: simple_fill(s.child("spPr")),
         line: simple_line(s.child("spPr")),
         smooth: s.child("smooth").and_then(|v| v.bool("val")).unwrap_or(false),
@@ -300,7 +308,7 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
         kind: Some(kind),
         secondary_axis: secondary,
         is_3d: g.local().contains("3DChart"),
-        custom_labels: read_custom_labels(s),
+        custom_labels,
         show_category_name: label_flag(s, g, "showCatName"),
         show_percent: label_flag(s, g, "showPercent"),
         show_series_name: label_flag(s, g, "showSerName"),
@@ -326,18 +334,10 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
             ser.point_fills.push((i as usize, f));
         }
     }
-    if let Some(cat) = s.child("cat").or_else(|| s.child("xVal")) {
-        let cats = strings(cat, budget);
-        if matches!(kind, ChartType::Scatter | ChartType::Bubble) {
-            ser.x_values = cats.iter().map(|v| v.trim().parse::<f64>().ok()).collect();
-        }
-        if categories.is_empty() {
-            *categories = cats;
-        }
+    if matches!(kind, ChartType::Scatter | ChartType::Bubble) {
+        ser.x_values = series_categories.iter().map(|v| v.trim().parse::<f64>().ok()).collect();
     }
-    if let Some(v) = s.child("val").or_else(|| s.child("yVal")) {
-        ser.values = numbers(v, budget);
-    }
+    ser.values = value_data;
     ser.error_bars = read_error_bars(s, kind, budget);
     if let Some(b) = s.child("bubbleSize") {
         ser.sizes = numbers(b, budget);
@@ -345,8 +345,9 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
     ser
 }
 
-/// Explicit point labels override the value/category formula for that data point.
-fn read_custom_labels(s: &El) -> Vec<Option<String>> {
+/// Explicit point labels override the value/category formula for that data point. Office stores
+/// live fields inside rich text, and cell-reference fields carry cached values in a c15 table.
+fn read_custom_labels(s: &El, series_name: &str, values: &[Option<f64>], categories: &[String]) -> Vec<Option<String>> {
     let mut out = Vec::new();
     for label in s.child("dLbls").into_iter().flat_map(|labels| labels.children_named("dLbl")) {
         let Some(i) = label.child("idx").and_then(|x| x.u32("val")).map(|i| i as usize) else { continue };
@@ -356,11 +357,56 @@ fn read_custom_labels(s: &El) -> Vec<Option<String>> {
         if out.len() <= i {
             out.resize(i + 1, None);
         }
-        if let Some(text) = rich_text(label).filter(|text| !text.is_empty()) {
+        let text = label
+            .child("tx")
+            .and_then(|tx| tx.child("rich"))
+            .map(|rich| {
+                rich.children_named("p")
+                    .map(|paragraph| {
+                        paragraph
+                            .elements()
+                            .map(|part| match part.local() {
+                                "r" => part.text(),
+                                "fld" => {
+                                    let field = part.attr("type").unwrap_or("").to_ascii_uppercase();
+                                    let value = match field.as_str() {
+                                        "VALUE" => values.get(i).copied().flatten().map(|v| v.to_string()),
+                                        "CATEGORYNAME" => categories.get(i).filter(|v| !v.is_empty()).cloned(),
+                                        "SERIESNAME" => (!series_name.is_empty()).then(|| series_name.to_string()),
+                                        "CELLREF" => custom_label_cell_ref(label, part, i),
+                                        _ => None,
+                                    };
+                                    value.unwrap_or_else(|| part.text())
+                                }
+                                "br" => "\n".to_string(),
+                                _ => String::new(),
+                            })
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .or_else(|| rich_text(label));
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
             out[i] = Some(text);
         }
     }
     out
+}
+
+fn custom_label_cell_ref(label: &El, field: &El, point: usize) -> Option<String> {
+    let id = field.attr("id")?;
+    let table = label.find("dlblFieldTable")?;
+    let entry = table.children_named("dlblFTEntry").find(|entry| entry.child("txfldGUID").is_some_and(|guid| guid.text() == id))?;
+    let points: Vec<_> = entry.child("dlblFieldTableCache")?.children_named("pt").collect();
+    points
+        .iter()
+        .copied()
+        .find(|p| p.u32("idx").is_some_and(|idx| idx as usize == point))
+        .or_else(|| if points.len() == 1 { points.first().copied() } else { None })
+        .and_then(|p| p.child("v"))
+        .map(|v| v.text())
+        .filter(|v| !v.is_empty())
 }
 
 fn label_flag(s: &El, g: &El, name: &str) -> Option<bool> {

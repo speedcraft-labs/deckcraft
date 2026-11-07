@@ -65,4 +65,16 @@ fn cited_chart_files_keep_custom_labels_and_3d_plot_kind() {
         charts(&slide.shapes, &mut found);
     }
     assert!(found.iter().any(|c| c.is_3d), "3-D plot kind lost during import");
+
+    let p = fixture("chart2/qa/extras/data/pptx/CustomDataLabel_tdf115107.pptx").expect("ARTCRAFT_CORPUS set");
+    let mut found = Vec::new();
+    for slide in &p.slides {
+        charts(&slide.shapes, &mut found);
+    }
+    let labels = found.iter().flat_map(|c| c.series.iter()).find(|s| s.custom_labels.iter().any(Option::is_some)).map(|s| &s.custom_labels);
+    let labels = labels.expect("explicit point labels imported");
+    assert_eq!(labels.get(0).and_then(Option::as_deref), Some("90.0 = 90"));
+    assert_eq!(labels.get(1).and_then(Option::as_deref), Some("Text : B\nMultiline\nAbc"));
+    assert_eq!(labels.get(2).and_then(Option::as_deref), Some("DATA"));
+    assert_eq!(labels.get(3).and_then(Option::as_deref), Some("70 <CELLREF"));
 }
