@@ -230,11 +230,21 @@ pub struct Series {
     /// Per-point fill overrides (pie slices).
     pub point_fills: Vec<(usize, Fill)>,
     pub data_labels: Option<bool>,
+    /// Label components requested by `c:dLbls`; unset components use OOXML defaults.
+    pub show_category_name: Option<bool>,
+    pub show_percent: Option<bool>,
+    pub show_series_name: Option<bool>,
+    /// Per-point label text explicitly stored in `c:dLbl/c:tx/c:rich`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom_labels: Vec<Option<String>>,
     pub smooth: bool,
     pub marker: Option<String>,
     /// Combo charts: this series' own type.
     pub kind: Option<ChartType>,
     pub secondary_axis: bool,
+    /// The series belongs to a DrawingML `*3DChart` plot group.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_3d: bool,
     /// The number format of the series' data labels (Excel code): the labels' own, else the
     /// source data's.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -332,6 +342,9 @@ pub struct Chart {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_size: Option<f64>,
     pub data_labels: bool,
+    /// DrawingML `*3DChart` plot groups are kept distinct so the renderer can give their bars depth.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_3d: bool,
     pub gridlines: bool,
     /// `c:minorGridlines` on the value axis: five to a major unit, between the major ones.
     pub minor_gridlines: bool,
@@ -453,6 +466,7 @@ impl Default for Chart {
             text_size: None,
             title_size: None,
             data_labels: false,
+            is_3d: false,
             gridlines: true,
             minor_gridlines: false,
             axis_titles: (None, None),
@@ -745,6 +759,41 @@ impl Chart {
     /// explicit `false` hides them even when the chart-wide setting is on (#868).
     pub fn series_data_labels(&self, s: &Series) -> bool {
         s.data_labels.unwrap_or(self.data_labels)
+            || s.show_category_name == Some(true)
+            || s.show_percent == Some(true)
+            || s.show_series_name == Some(true)
+    }
+
+    /// Text of one visible point label, including custom text, category and percentage parts.
+    pub fn series_label(&self, s: &Series, i: usize) -> Option<String> {
+        if let Some(text) = s.custom_labels.get(i).and_then(Clone::clone) {
+            return Some(text);
+        }
+        let value = s.values.get(i).copied().flatten()?;
+        let show_value = s.data_labels.unwrap_or(self.data_labels);
+        let show_cat = s.show_category_name == Some(true);
+        let show_series = s.show_series_name == Some(true);
+        let show_percent = s.show_percent == Some(true);
+        let mut parts = Vec::new();
+        if show_series && !s.name.is_empty() {
+            parts.push(s.name.clone());
+        }
+        if show_cat && let Some(cat) = self.categories.get(i).filter(|x| !x.is_empty()) {
+            parts.push(cat.clone());
+        }
+        if show_value {
+            parts.push(self.data_label(s, value));
+        }
+        if show_percent {
+            let total: f64 = s.values.iter().flatten().filter(|v| v.is_finite()).map(|v| v.abs()).sum();
+            if total > 0.0 {
+                parts.push(crate::numfmt::format("0%", (value.abs() / total).clamp(0.0, 1.0), self.lang.as_deref()));
+            }
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        Some(parts.join("\n"))
     }
 
     fn waterfall_value_range(&self) -> (f64, f64) {
@@ -977,6 +1026,20 @@ mod tests {
         c.data_labels = true;
         s.data_labels = Some(false);
         assert!(!c.series_data_labels(&s), "an explicit series false hides them anyway");
+    }
+
+    #[test]
+    fn category_and_percent_label_parts_render_even_when_values_are_hidden() {
+        let c = Chart { categories: vec!["North".into(), "South".into()], ..Default::default() };
+        let s = Series {
+            values: vec![Some(25.0), Some(75.0)],
+            data_labels: Some(false),
+            show_category_name: Some(true),
+            show_percent: Some(true),
+            ..Default::default()
+        };
+        assert!(c.series_data_labels(&s));
+        assert_eq!(c.series_label(&s, 0).as_deref(), Some("North\n25%"));
     }
 
     #[test]

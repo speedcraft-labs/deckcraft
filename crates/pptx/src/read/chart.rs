@@ -136,6 +136,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             continue;
         }
         let Some(kind) = group_chart_type(name, g) else { continue };
+        c.is_3d |= name.contains("3DChart");
         if name == "stockChart" {
             c.up_down_bars = g.child("upDownBars").is_some();
         }
@@ -298,11 +299,18 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
         marker: s.path(&["marker", "symbol"]).and_then(|m| m.attr("val")).filter(|m| *m != "none").map(String::from),
         kind: Some(kind),
         secondary_axis: secondary,
+        is_3d: g.local().contains("3DChart"),
+        custom_labels: read_custom_labels(s),
+        show_category_name: label_flag(s, g, "showCatName"),
+        show_percent: label_flag(s, g, "showPercent"),
+        show_series_name: label_flag(s, g, "showSerName"),
         ..Default::default()
     };
     // `<c:showVal/>` without a val attribute means true, as in the schema's default.
     if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
         ser.data_labels = Some(d);
+    } else if ser.custom_labels.iter().any(Option::is_some) {
+        ser.data_labels = Some(true);
     } else if let Some(false) = group_labels {
         // The group asks for no labels and the series does not say otherwise.
         ser.data_labels = Some(false);
@@ -335,6 +343,38 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
         ser.sizes = numbers(b, budget);
     }
     ser
+}
+
+/// Explicit point labels override the value/category formula for that data point.
+fn read_custom_labels(s: &El) -> Vec<Option<String>> {
+    let mut out = Vec::new();
+    for label in s.child("dLbls").into_iter().flat_map(|labels| labels.children_named("dLbl")) {
+        let Some(i) = label.child("idx").and_then(|x| x.u32("val")).map(|i| i as usize) else { continue };
+        if i >= 100_000 {
+            continue;
+        }
+        if out.len() <= i {
+            out.resize(i + 1, None);
+        }
+        if let Some(text) = rich_text(label).filter(|text| !text.is_empty()) {
+            out[i] = Some(text);
+        }
+    }
+    out
+}
+
+fn label_flag(s: &El, g: &El, name: &str) -> Option<bool> {
+    s.child("dLbls")
+        .and_then(|labels| labels.child(name))
+        .or_else(|| g.child("dLbls").and_then(|labels| labels.child(name)))
+        .and_then(|flag| flag.bool("val"))
+        .or_else(|| {
+            s.child("dLbls")
+                .and_then(|labels| labels.child(name))
+                .or_else(|| g.child("dLbls").and_then(|labels| labels.child(name)))
+                .is_some()
+                .then_some(true)
+        })
 }
 
 /// Axis scaling, titles, number formats and visibility. Returns the primary value axis and the
@@ -852,6 +892,20 @@ mod tests {
     #[test]
     fn missing_vary_colors_means_vary_by_point() {
         assert!(read_chart_xml(vary_xml("").as_bytes()).is_some_and(|c| c.vary_colors));
+    }
+
+    #[test]
+    fn three_d_groups_and_custom_point_labels_are_read() {
+        let xml = format!(
+            r#"<c:chartSpace xmlns:c="{NS_CHART}" xmlns:a="{NS_A}"><c:chart><c:plotArea>
+            <c:bar3DChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>100</c:v></c:pt></c:numLit></c:val>
+            <c:dLbls><c:dLbl><c:idx val="0"/><c:tx><c:rich><a:p><a:r><a:t>Custom 100%</a:t></a:r></a:p></c:rich></c:tx></c:dLbl></c:dLbls>
+            </c:ser></c:bar3DChart></c:plotArea></c:chart></c:chartSpace>"#
+        );
+        let c = read_chart_xml(xml.as_bytes()).unwrap();
+        assert!(c.is_3d);
+        assert_eq!(c.series[0].custom_labels[0].as_deref(), Some("Custom 100%"));
+        assert_eq!(c.series[0].data_labels, Some(true));
     }
 
     #[test]

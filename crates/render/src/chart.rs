@@ -1034,6 +1034,39 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                 } else {
                     bar_paint(rctx, c, *si, i, s, point_fills.get(bi))
                 };
+                if s.is_3d && !waterfall {
+                    // A compact isometric extrusion gives OOXML 3-D columns real visible depth.
+                    // Draw the top and side first so the front face keeps its ordinary chart fill.
+                    let depth = (bar.min(base) * 0.28).clamp(3.0, 12.0);
+                    let face = point_fills
+                        .get(bi)
+                        .and_then(|m| m.get(&i))
+                        .and_then(|f| match f {
+                            Fill::Solid { color: cc } => Some(rctx.color(cc, None)),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| series_fill(rctx, c, *si, Some(s)));
+                    let shade =
+                        |factor: f64| Rgba::rgb((face.r as f64 * factor) as u8, (face.g as f64 * factor) as u8, (face.b as f64 * factor) as u8);
+                    let mut top = BezPath::new();
+                    top.move_to((r.x0, r.y0));
+                    top.line_to((r.x0 + depth, r.y0 - depth));
+                    top.line_to((r.x1 + depth, r.y0 - depth));
+                    top.line_to((r.x1, r.y0));
+                    top.close_path();
+                    let mut side = BezPath::new();
+                    side.move_to((r.x1, r.y0));
+                    side.line_to((r.x1 + depth, r.y0 - depth));
+                    side.line_to((r.x1 + depth, r.y1 - depth));
+                    side.line_to((r.x1, r.y1));
+                    side.close_path();
+                    ctx.set_transform(m);
+                    ctx.set_paint(color(shade(1.15), 1.0));
+                    ctx.fill_path(&top);
+                    ctx.set_transform(m);
+                    ctx.set_paint(color(shade(0.68), 1.0));
+                    ctx.fill_path(&side);
+                }
                 fill_with(ctx, &paint, r.abs(), m);
                 if !waterfall && let Some((oc, ow)) = bar_outline(rctx, s).filter(|o| o.1 > 0.0) {
                     ctx.set_transform(m);
@@ -1088,7 +1121,7 @@ fn bar_data_label(c: &Chart, s: &deckcraft_model::chart::Series, i: usize) -> Op
     if !c.series_data_labels(s) {
         return None;
     }
-    s.values.get(i).copied().flatten().map(|value| c.data_label(s, value))
+    c.series_label(s, i)
 }
 
 #[cfg(test)]
@@ -1106,6 +1139,13 @@ mod bar_label_tests {
         assert_eq!(labels, ["1", "3"]);
         let zero = Series { values: [Some(0.0)].into(), ..Default::default() };
         assert_eq!(bar_data_label(&chart, &zero, 0).as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn custom_point_label_overrides_the_formatted_value() {
+        let chart = Chart { data_labels: true, ..Default::default() };
+        let series = Series { values: vec![Some(100.0)], custom_labels: vec![Some("Custom 100%".into())], ..Default::default() };
+        assert_eq!(bar_data_label(&chart, &series, 0).as_deref(), Some("Custom 100%"));
     }
 }
 
@@ -1146,7 +1186,7 @@ fn draw_pie(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
                 ctx,
                 rctx,
                 m,
-                &c.data_label(s, *v),
+                c.series_label(s, i).unwrap_or_else(|| c.data_label(s, *v)).as_str(),
                 Rect::new(lp.x - 30.0, lp.y - 10.0, lp.x + 30.0, lp.y + 10.0),
                 LabelStyle {
                     size: base,
