@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use deckcraft_geom::Rect;
-use deckcraft_model::{Master, Presentation, ShapeId, Slide};
+use deckcraft_model::style::Fill;
+use deckcraft_model::{Geom, Master, Presentation, ShapeId, ShapeKind, Slide};
 use deckcraft_render::{Image, Region, RenderOpts};
 use egui::{ColorImage, TextureFilter, TextureHandle, TextureOptions, TextureWrapMode};
 
@@ -234,6 +235,134 @@ fn same(a: &Option<Arc<Master>>, b: &Option<Arc<Master>>) -> bool {
     }
 }
 
+/// The only difference is the transform of one plain shape or picture. Compare slide metadata
+/// directly so drag frames don't clone every shape just to validate the cache fast path.
+fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm, deckcraft_geom::Xfrm)> {
+    if old.shapes.len() != new.shapes.len()
+        || old.id != new.id
+        || old.layout != new.layout
+        || old.name != new.name
+        || old.background != new.background
+        || old.hidden != new.hidden
+        || old.show_master_shapes != new.show_master_shapes
+        || old.transition != new.transition
+        || old.animations != new.animations
+        || old.notes != new.notes
+        || old.comments != new.comments
+        || old.color_map != new.color_map
+        || old.tags != new.tags
+        || old.raw_ext != new.raw_ext
+    {
+        return None;
+    }
+    let mut changed = None;
+    for (index, (before, after)) in old.shapes.iter().zip(&new.shapes).enumerate() {
+        if before == after {
+            continue;
+        }
+        if changed.replace(index).is_some() {
+            return None;
+        }
+        let (Some(a), Some(b)) = (before.xfrm, after.xfrm) else { return None };
+        if !matches!(&before.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
+            || !matches!(&before.geom, Geom::Preset { .. })
+            || before.text.is_some()
+            || before.effects.as_ref().is_some_and(|effects| !effects.is_empty())
+            || before.ph.is_some()
+            || before.style.as_ref().is_some_and(|style| style.effect_ref.0 != 0)
+            || !before.line.as_ref().is_some_and(|line| line.fill.as_ref().is_some_and(Fill::is_none))
+            || before.hidden
+            || !a.is_finite()
+            || !b.is_finite()
+            || a.w != b.w
+            || a.h != b.h
+            || a.rot != 0.0
+            || a.rot != b.rot
+            || a.flip_h != b.flip_h
+            || a.flip_v != b.flip_v
+        {
+            return None;
+        }
+        let mut reverted = after.clone();
+        reverted.xfrm = Some(a);
+        if reverted != *before {
+            return None;
+        }
+    }
+    let Some(index) = changed else { return None };
+    Some((index, old.shapes[index].xfrm?, new.shapes[index].xfrm?))
+}
+
+/// A conservative pixel region for a slide whose only change is translating one plain shape or
+/// picture. Effects, text, groups, rotations and size changes fall back to the full renderer.
+fn moved_shape_region(_index: usize, a: deckcraft_geom::Xfrm, b: deckcraft_geom::Xfrm, scale: f64, texture: Region) -> Option<(Region, [usize; 2])> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let bounds = a.bounds().union(b.bounds()).inflate(2.0 / scale, 2.0 / scale);
+    if !bounds.is_finite() {
+        return None;
+    }
+    let edges = [
+        (bounds.x0 * scale).floor() as i64,
+        (bounds.y0 * scale).floor() as i64,
+        (bounds.x1 * scale).ceil() as i64,
+        (bounds.y1 * scale).ceil() as i64,
+    ];
+    let tx0 = i64::from(texture.x);
+    let ty0 = i64::from(texture.y);
+    let tx1 = tx0 + i64::from(texture.w);
+    let ty1 = ty0 + i64::from(texture.h);
+    let (x0, y0, x1, y1) = (edges[0].max(tx0), edges[1].max(ty0), edges[2].min(tx1), edges[3].min(ty1));
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
+    let x = i32::try_from(x0).ok()?;
+    let y = i32::try_from(y0).ok()?;
+    let patch = Region { x, y, w: u32::try_from(x1 - x0).ok()?, h: u32::try_from(y1 - y0).ok()? };
+    Some((patch, [usize::try_from(x0 - tx0).ok()?, usize::try_from(y0 - ty0).ok()?]))
+}
+
+/// Shapes that cannot reach a damage rectangle need not be parsed and rasterized again when the
+/// editor patches a moved shape. Only skip simple, unrotated, untextured shapes with no effects or
+/// outline; complex shapes stay in the patch render so text spill, shadows and custom geometry
+/// continue to follow the full renderer's behavior.
+fn skip_outside_patch(slide: &Slide, patch: Region, scale: f64) -> Vec<ShapeId> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return Vec::new();
+    }
+    let damage = [
+        f64::from(patch.x) / scale,
+        f64::from(patch.y) / scale,
+        (f64::from(patch.x) + f64::from(patch.w)) / scale,
+        (f64::from(patch.y) + f64::from(patch.h)) / scale,
+    ];
+    slide
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            let xfrm = shape.xfrm?;
+            let line_is_none = shape.line.as_ref().is_some_and(|line| line.fill.as_ref().is_some_and(Fill::is_none));
+            let simple = matches!(&shape.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
+                && matches!(&shape.geom, Geom::Preset { .. })
+                && shape.text.is_none()
+                && shape.effects.as_ref().is_none_or(|effects| effects.is_empty())
+                && shape.ph.is_none()
+                && shape.style.as_ref().is_none_or(|style| style.effect_ref.0 == 0)
+                && line_is_none
+                && !shape.hidden
+                && xfrm.is_finite()
+                && xfrm.rot == 0.0;
+            if !simple {
+                return None;
+            }
+            let bounds = xfrm.bounds().inflate(2.0 / scale, 2.0 / scale);
+            let intersects = bounds.x0 < damage[2] && bounds.x1 > damage[0] && bounds.y0 < damage[3] && bounds.y1 > damage[1];
+            (!intersects).then_some(shape.id)
+        })
+        .collect()
+}
+
 /// Mix the preview playhead into the canvas cache key. Zero means "no preview", so a playhead of
 /// 0s still misses the at-rest texture (entrances start hidden).
 fn anim_key(anim: Option<(&deckcraft_anim::Timeline, f64)>) -> u64 {
@@ -269,12 +398,36 @@ impl Textures {
         let slide = p.slides.get(index)?.clone();
         let master = master_of(p, &slide);
         let scale = size.0 as f64 / p.slide_size.width.max(1.0);
-        let estimate = match &self.estimate {
-            Some((s, m, r)) if Arc::ptr_eq(s, &slide) && same(m, &master) => *r,
+        let movement = self.canvas.as_ref().and_then(|entry| same(&entry._master, &master).then(|| moved_shape(&entry._slide, &slide)).flatten());
+        let cached_estimate = self.estimate.as_ref().map(|(s, m, r)| (s.clone(), m.clone(), *r));
+        let reusable_extent = match (&cached_estimate, movement) {
+            (Some((cached_slide, cached_master, extent)), Some((_, _, new_xfrm)))
+                if self.canvas.as_ref().is_some_and(|entry| Arc::ptr_eq(cached_slide, &entry._slide))
+                    && same(cached_master, &master)
+                    && extent.x0 == 0.0
+                    && extent.y0 == 0.0
+                    && extent.x1 == p.slide_size.width
+                    && extent.y1 == p.slide_size.height
+                    && new_xfrm.bounds().x0 >= 0.0
+                    && new_xfrm.bounds().y0 >= 0.0
+                    && new_xfrm.bounds().x1 <= p.slide_size.width
+                    && new_xfrm.bounds().y1 <= p.slide_size.height =>
+            {
+                Some(*extent)
+            }
+            _ => None,
+        };
+        let estimate = match cached_estimate {
+            Some((cached_slide, cached_master, extent)) if Arc::ptr_eq(&cached_slide, &slide) && same(&cached_master, &master) => extent,
+            Some(_) if reusable_extent.is_some() => {
+                let extent = reusable_extent.unwrap_or_default();
+                self.estimate = Some((slide.clone(), master.clone(), extent));
+                extent
+            }
             _ => {
-                let r = deckcraft_render::slide_extent(p, index);
-                self.estimate = Some((slide.clone(), master.clone(), r));
-                r
+                let extent = deckcraft_render::slide_extent(p, index);
+                self.estimate = Some((slide.clone(), master.clone(), extent));
+                extent
             }
         };
         let reach = match self.drawn {
@@ -299,12 +452,13 @@ impl Textures {
             return Some((e.tex.clone(), e.region));
         }
         let t0 = crate::now_ms();
-        let render = |region: Region| {
+        let render = |region: Region, skip: &[ShapeId]| {
             let state_of = |id: ShapeId| anim.map(|(tl, time)| crate::preview::shape_state_at(tl, id, time)).unwrap_or_default();
             let state: Option<&dyn Fn(ShapeId) -> deckcraft_render::ShapeState> = if anim.is_some() { Some(&state_of) } else { None };
             let opts = RenderOpts {
                 scale,
                 edit,
+                skip,
                 gif_times,
                 threads: threads(),
                 offset: region.offset(),
@@ -315,7 +469,31 @@ impl Textures {
             };
             deckcraft_render::render_slide_drawn(p, index, &opts)
         };
-        let (mut img, drawn) = render(want);
+        if anim.is_none()
+            && gif_times.is_empty()
+            && editing_text.is_none()
+            && let Some((index, old_xfrm, new_xfrm)) = movement
+            && let Some((patch, pos)) = self.canvas.as_ref().and_then(|entry| {
+                let mut comparable = key.clone();
+                comparable.slide = entry.key.slide;
+                (entry.key == comparable).then(|| moved_shape_region(index, old_xfrm, new_xfrm, scale, entry.region)).flatten()
+            })
+        {
+            let skip = skip_outside_patch(&slide, patch, scale);
+            let (img, _) = render(patch, &skip);
+            if img.width == patch.w
+                && img.height == patch.h
+                && let Some(entry) = self.canvas.as_mut()
+            {
+                entry.tex.set_partial(pos, to_color_image(&img, grayscale), editor_texture_options());
+                entry.key = key;
+                entry._slide = slide;
+                self.canvas_renders += 1;
+                self.last_render_ms = crate::now_ms() - t0;
+                return Some((entry.tex.clone(), entry.region));
+            }
+        }
+        let (mut img, drawn) = render(want, &[]);
         self.canvas_renders += 1;
         let mut region = want;
         // Text spilling out of its box can reach further than the boxes said. Once drawn, the
@@ -325,7 +503,7 @@ impl Textures {
             Key { want: fit_texture(deckcraft_render::pasteboard_region(size, scale, estimate.union(drawn), visible), visible, max_side), ..key };
         if !region.contains(&key.want) {
             region = key.want;
-            img = render(region).0;
+            img = render(region, &[]).0;
             self.canvas_renders += 1;
         }
         self.drawn = Some((index, drawn));
@@ -421,7 +599,7 @@ impl Textures {
 
 #[cfg(test)]
 mod tests {
-    use super::device_pixel_rect;
+    use super::{RenderOpts, device_pixel_rect, moved_shape, moved_shape_region};
     use egui::{Rect, pos2, vec2};
 
     fn on_grid(v: f32, ppp: f32) -> bool {
@@ -463,6 +641,54 @@ mod tests {
         let r = Rect::from_min_size(pos2(3.0, 4.0), vec2(10.0, 12.0));
         assert_eq!(device_pixel_rect(r, 0.0), r);
         assert_eq!(device_pixel_rect(r, f32::NAN), r);
+    }
+
+    #[test]
+    fn translating_one_shape_and_patching_its_dirty_region_matches_a_full_render() {
+        use deckcraft_color::SchemeSlot;
+        use deckcraft_geom::Xfrm;
+        use deckcraft_model::{Line, Presentation, Shape, ShapeId, ShapeStyle};
+        use std::sync::Arc;
+
+        let mut before = Presentation::default();
+        let shape_index = before.slides[0].shapes.len();
+        Arc::make_mut(&mut before.slides[0]).shapes.push(Shape {
+            id: ShapeId(42),
+            xfrm: Some(Xfrm::new(24.0, 30.0, 120.0, 90.0)),
+            line: Some(Line::none()),
+            style: Some(ShapeStyle::accent(SchemeSlot::Accent1)),
+            effects: Some(Default::default()),
+            ..Default::default()
+        });
+        let mut after = before.clone();
+        let shape = &mut Arc::make_mut(&mut after.slides[0]).shapes[shape_index];
+        let mut moved = shape.xfrm.unwrap_or_default();
+        moved.x += 70.0;
+        moved.y += 35.0;
+        shape.xfrm = Some(moved);
+
+        let viewport = deckcraft_render::Region::slide(960, 540);
+        let damage =
+            moved_shape(&before.slides[0], &after.slides[0]).and_then(|(index, old, new)| moved_shape_region(index, old, new, 1.0, viewport));
+        assert!(damage.is_some(), "single translation is patchable");
+        let (patch, pos) = damage.unwrap_or_default();
+        let mut reconstructed =
+            deckcraft_render::render_slide(&before, 0, &RenderOpts { scale: 1.0, edit: true, size: Some(viewport.size()), ..Default::default() });
+        let expected =
+            deckcraft_render::render_slide(&after, 0, &RenderOpts { scale: 1.0, edit: true, size: Some(viewport.size()), ..Default::default() });
+        let patch_img = deckcraft_render::render_slide(
+            &after,
+            0,
+            &RenderOpts { scale: 1.0, edit: true, offset: patch.offset(), size: Some(patch.size()), ..Default::default() },
+        );
+        assert_eq!((patch_img.width, patch_img.height), patch.size());
+        for y in 0..patch.h as usize {
+            let source = y * patch.w as usize * 4;
+            let target = ((pos[1] + y) * reconstructed.width as usize + pos[0]) * 4;
+            let length = patch.w as usize * 4;
+            reconstructed.pixels[target..target + length].copy_from_slice(&patch_img.pixels[source..source + length]);
+        }
+        assert_eq!(reconstructed.pixels, expected.pixels);
     }
 }
 
