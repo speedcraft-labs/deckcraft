@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-07 · **Last updated:** 2026-11-07 · **Change:** minor (LibreOffice oracle reproducers: SmartArt cached drawing fallback, 3-D columns and chart labels #226; broader chart/SmartArt fidelity remains open) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-07 | LibreOffice oracle #226: render SmartArt's cached drawing first, use a generic outline layout when absent; render 3-D column depth and category/percentage point labels |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |

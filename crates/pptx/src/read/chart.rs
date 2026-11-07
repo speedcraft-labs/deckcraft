@@ -136,6 +136,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             continue;
         }
         let Some(kind) = group_chart_type(name, g) else { continue };
+        c.is_3d |= name.contains("3DChart");
         if name == "stockChart" {
             c.up_down_bars = g.child("upDownBars").is_some();
         }
@@ -290,19 +291,34 @@ fn read_error_bars(s: &El, kind: ChartType, budget: &mut usize) -> Option<ErrorB
 /// setting); the first series with categories sets `categories`.
 fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categories: &mut Vec<String>, budget: &mut usize) -> Series {
     let (kind, secondary, group_labels) = group;
+    let name = s.child("tx").map(|t| strings(t, budget)).and_then(|v| v.into_iter().next()).unwrap_or_default();
+    let series_categories = s.child("cat").or_else(|| s.child("xVal")).map(|cat| strings(cat, budget)).unwrap_or_default();
+    if categories.is_empty() {
+        *categories = series_categories.clone();
+    }
+    let value_data = s.child("val").or_else(|| s.child("yVal")).map(|v| numbers(v, budget)).unwrap_or_default();
+    let label_categories = if series_categories.is_empty() { categories.as_slice() } else { series_categories.as_slice() };
+    let custom_labels = read_custom_labels(s, &name, &value_data, label_categories);
     let mut ser = Series {
-        name: s.child("tx").map(|t| strings(t, budget)).and_then(|v| v.into_iter().next()).unwrap_or_default(),
+        name,
         fill: simple_fill(s.child("spPr")),
         line: simple_line(s.child("spPr")),
         smooth: s.child("smooth").and_then(|v| v.bool("val")).unwrap_or(false),
         marker: s.path(&["marker", "symbol"]).and_then(|m| m.attr("val")).filter(|m| *m != "none").map(String::from),
         kind: Some(kind),
         secondary_axis: secondary,
+        is_3d: g.local().contains("3DChart"),
+        custom_labels,
+        show_category_name: label_flag(s, g, "showCatName"),
+        show_percent: label_flag(s, g, "showPercent"),
+        show_series_name: label_flag(s, g, "showSerName"),
         ..Default::default()
     };
     // `<c:showVal/>` without a val attribute means true, as in the schema's default.
     if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
         ser.data_labels = Some(d);
+    } else if ser.custom_labels.iter().any(Option::is_some) {
+        ser.data_labels = Some(true);
     } else if let Some(false) = group_labels {
         // The group asks for no labels and the series does not say otherwise.
         ser.data_labels = Some(false);
@@ -318,23 +334,93 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
             ser.point_fills.push((i as usize, f));
         }
     }
-    if let Some(cat) = s.child("cat").or_else(|| s.child("xVal")) {
-        let cats = strings(cat, budget);
-        if matches!(kind, ChartType::Scatter | ChartType::Bubble) {
-            ser.x_values = cats.iter().map(|v| v.trim().parse::<f64>().ok()).collect();
-        }
-        if categories.is_empty() {
-            *categories = cats;
-        }
+    if matches!(kind, ChartType::Scatter | ChartType::Bubble) {
+        ser.x_values = series_categories.iter().map(|v| v.trim().parse::<f64>().ok()).collect();
     }
-    if let Some(v) = s.child("val").or_else(|| s.child("yVal")) {
-        ser.values = numbers(v, budget);
-    }
+    ser.values = value_data;
     ser.error_bars = read_error_bars(s, kind, budget);
     if let Some(b) = s.child("bubbleSize") {
         ser.sizes = numbers(b, budget);
     }
     ser
+}
+
+/// Explicit point labels override the value/category formula for that data point. Office stores
+/// live fields inside rich text, and cell-reference fields carry cached values in a c15 table.
+fn read_custom_labels(s: &El, series_name: &str, values: &[Option<f64>], categories: &[String]) -> Vec<Option<String>> {
+    let mut out = Vec::new();
+    for label in s.child("dLbls").into_iter().flat_map(|labels| labels.children_named("dLbl")) {
+        let Some(i) = label.child("idx").and_then(|x| x.u32("val")).map(|i| i as usize) else { continue };
+        if i >= 100_000 {
+            continue;
+        }
+        if out.len() <= i {
+            out.resize(i + 1, None);
+        }
+        let text = label
+            .child("tx")
+            .and_then(|tx| tx.child("rich"))
+            .map(|rich| {
+                rich.children_named("p")
+                    .map(|paragraph| {
+                        paragraph
+                            .elements()
+                            .map(|part| match part.local() {
+                                "r" => part.text(),
+                                "fld" => {
+                                    let field = part.attr("type").unwrap_or("").to_ascii_uppercase();
+                                    let value = match field.as_str() {
+                                        "VALUE" => values.get(i).copied().flatten().map(|v| v.to_string()),
+                                        "CATEGORYNAME" => categories.get(i).filter(|v| !v.is_empty()).cloned(),
+                                        "SERIESNAME" => (!series_name.is_empty()).then(|| series_name.to_string()),
+                                        "CELLREF" => custom_label_cell_ref(label, part, i),
+                                        _ => None,
+                                    };
+                                    value.unwrap_or_else(|| part.text())
+                                }
+                                "br" => "\n".to_string(),
+                                _ => String::new(),
+                            })
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .or_else(|| rich_text(label));
+        if let Some(text) = text.filter(|text| !text.is_empty()) {
+            out[i] = Some(text);
+        }
+    }
+    out
+}
+
+fn custom_label_cell_ref(label: &El, field: &El, point: usize) -> Option<String> {
+    let id = field.attr("id")?;
+    let table = label.find("dlblFieldTable")?;
+    let entry = table.children_named("dlblFTEntry").find(|entry| entry.child("txfldGUID").is_some_and(|guid| guid.text() == id))?;
+    let points: Vec<_> = entry.child("dlblFieldTableCache")?.children_named("pt").collect();
+    points
+        .iter()
+        .copied()
+        .find(|p| p.u32("idx").is_some_and(|idx| idx as usize == point))
+        .or_else(|| if points.len() == 1 { points.first().copied() } else { None })
+        .and_then(|p| p.child("v"))
+        .map(|v| v.text())
+        .filter(|v| !v.is_empty())
+}
+
+fn label_flag(s: &El, g: &El, name: &str) -> Option<bool> {
+    s.child("dLbls")
+        .and_then(|labels| labels.child(name))
+        .or_else(|| g.child("dLbls").and_then(|labels| labels.child(name)))
+        .and_then(|flag| flag.bool("val"))
+        .or_else(|| {
+            s.child("dLbls")
+                .and_then(|labels| labels.child(name))
+                .or_else(|| g.child("dLbls").and_then(|labels| labels.child(name)))
+                .is_some()
+                .then_some(true)
+        })
 }
 
 /// Axis scaling, titles, number formats and visibility. Returns the primary value axis and the
@@ -852,6 +938,20 @@ mod tests {
     #[test]
     fn missing_vary_colors_means_vary_by_point() {
         assert!(read_chart_xml(vary_xml("").as_bytes()).is_some_and(|c| c.vary_colors));
+    }
+
+    #[test]
+    fn three_d_groups_and_custom_point_labels_are_read() {
+        let xml = format!(
+            r#"<c:chartSpace xmlns:c="{NS_CHART}" xmlns:a="{NS_A}"><c:chart><c:plotArea>
+            <c:bar3DChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>100</c:v></c:pt></c:numLit></c:val>
+            <c:dLbls><c:dLbl><c:idx val="0"/><c:tx><c:rich><a:p><a:r><a:t>Custom 100%</a:t></a:r></a:p></c:rich></c:tx></c:dLbl></c:dLbls>
+            </c:ser></c:bar3DChart></c:plotArea></c:chart></c:chartSpace>"#
+        );
+        let c = read_chart_xml(xml.as_bytes()).unwrap();
+        assert!(c.is_3d);
+        assert_eq!(c.series[0].custom_labels[0].as_deref(), Some("Custom 100%"));
+        assert_eq!(c.series[0].data_labels, Some(true));
     }
 
     #[test]

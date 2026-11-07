@@ -127,7 +127,7 @@ fn region_tiles(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
                 text = format!(
                     "{text}
 {}",
-                    c.data_label(s, *v)
+                    c.series_label(s, i).unwrap_or_else(|| c.data_label(s, *v))
                 );
             }
             let inner = t.inset(-base * 0.25);

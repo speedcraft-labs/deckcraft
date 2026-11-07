@@ -185,6 +185,8 @@ Detail in [file-format-parity.md](file-format-parity.md).
   drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
   also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary
   payloads in bounded ZIP entries sharing the media load budget (`crates/format` tests).
+  LibreOffice's #226 pie labels (category and percentage) are now read and drawn, and 3-D columns
+  get shallow top and side faces; other 3-D geometry and its camera remain gaps.
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 
@@ -197,8 +199,8 @@ Detail in [file-format-parity.md](file-format-parity.md).
   a radial, hierarchy, two pyramids, two matrices), four SmartArt Styles and Change Colors
   (colourful or one accent). Still missing: DeckCraft's own layout definitions are simple (not yet
   checked in PowerPoint itself); PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
-  imported diagram's outline redraws it with DeckCraft's layout; a diagram with no cached drawing
-  isn't drawn.
+  imported diagram's outline redraws it with DeckCraft's layout; if a drawing is absent or empty,
+  the reader draws a generic outline layout (not the diagram's original layout).
 - **Impact:** a PowerPoint diagram edited in DeckCraft changes look.
 - **Estimate:** 6–10 h.
 
