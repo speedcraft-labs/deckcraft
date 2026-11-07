@@ -73,7 +73,7 @@ fn cited_chart_files_keep_custom_labels_and_3d_plot_kind() {
     }
     let labels = found.iter().flat_map(|c| c.series.iter()).find(|s| s.custom_labels.iter().any(Option::is_some)).map(|s| &s.custom_labels);
     let labels = labels.expect("explicit point labels imported");
-    assert_eq!(labels.get(0).and_then(Option::as_deref), Some("90.0 = 90"));
+    assert_eq!(labels.first().and_then(Option::as_deref), Some("90.0 = 90"));
     assert_eq!(labels.get(1).and_then(Option::as_deref), Some("Text : B\nMultiline\nAbc"));
     assert_eq!(labels.get(2).and_then(Option::as_deref), Some("DATA"));
     assert_eq!(labels.get(3).and_then(Option::as_deref), Some("70 <CELLREF"));

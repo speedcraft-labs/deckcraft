@@ -62,7 +62,8 @@ pub struct DecodeStats {
 
 #[derive(Default)]
 struct Shared {
-    error: Mutex<Option<Error>>,
+    /// Worker errors are ordered by picture id, never by whichever worker wins the mutex race.
+    error: Mutex<Option<(u32, Error)>>,
     stats: Mutex<DecodeStats>,
 }
 
@@ -200,7 +201,8 @@ impl Decoder {
     /// Decode one access unit (all NAL units of one picture, Annex-B or length-prefixed per
     /// configuration; a byte stream with several complete access units is accepted too). Returns
     /// pictures that became ready for output, in output order; `pts` travels with the picture of this
-    /// access unit through reordering.
+    /// access unit through reordering. Errors raised by a picture worker are deferred to
+    /// [`Decoder::take_error`] so scheduling cannot change which call reports them.
     pub fn decode(&mut self, data: &[u8], pts: i64) -> Result<Vec<Picture>> {
         let nals = match self.nal_length_size {
             Some(n) => length_prefixed_nals(data, n)?,
@@ -214,9 +216,6 @@ impl Decoder {
             }
         }
         self.submit_pending();
-        if let Some(e) = self.take_error() {
-            result = result.and(Err(e));
-        }
         result?;
         let max_queue = self.max_in_flight * 2;
         let mut pics = Vec::new();
@@ -238,7 +237,7 @@ impl Decoder {
         self.out_queue.extend(outs);
         let pics = self.out_queue.drain(..).map(|o| make_picture(&o)).collect();
         while let Some(f) = self.in_flight.pop_front() {
-            f.wait_complete();
+            f.wait_job_complete();
         }
         self.first_picture = true;
         pics
@@ -255,8 +254,6 @@ impl Decoder {
         }
     }
 
-    /// First error reported by a decoding job since the last call (also returned by
-    /// [`Decoder::decode`]); useful after [`Decoder::flush`].
     /// Draft mode for reduced-resolution playback (off by default): sub-layer non-reference
     /// pictures of the highest temporal sub-layer (pictures nothing predicts from) skip
     /// deblocking and SAO and come out flagged [`Picture::draft`]; every other picture is
@@ -266,7 +263,12 @@ impl Decoder {
     }
 
     pub fn take_error(&mut self) -> Option<Error> {
-        self.shared.error.lock().ok().and_then(|mut e| e.take())
+        // A later picture can fail before an earlier picture finishes. Wait for the submitted
+        // pictures before selecting the earliest error, so callers never observe scheduler order.
+        for frame in &self.in_flight {
+            frame.wait_job_complete();
+        }
+        self.shared.error.lock().ok().and_then(|mut e| e.take().map(|(_, error)| error))
     }
 
     fn handle_nal(&mut self, nal: &[u8], pts: i64) -> Result<()> {
@@ -548,10 +550,10 @@ impl Decoder {
         let shared = self.shared.clone();
         #[cfg(feature = "threads")]
         if let Some(pool) = &self.pool {
-            self.in_flight.retain(|f| !f.is_complete());
+            self.in_flight.retain(|f| !f.is_job_complete());
             while self.in_flight.len() >= self.max_in_flight {
                 if let Some(f) = self.in_flight.pop_front() {
-                    f.wait_complete();
+                    f.wait_job_complete();
                 }
             }
             self.in_flight.push_back(frame.clone());
@@ -583,12 +585,16 @@ fn run_job(
                 first_err.get_or_insert(e);
             }
         }
+        if let Some(e) = &first_err {
+            record_error(shared, frame.id, e.clone());
+        }
         crate::filter::finish(&mut pic);
         (pic, first_err)
     }));
-    let (pic, err) = match result {
-        Ok((pic, err)) => (Some(pic), err),
+    let pic = match result {
+        Ok((pic, _)) => Some(pic),
         Err(_) => {
+            record_error(shared, frame.id, Error::Invalid("internal error while decoding a picture".into()));
             // make sure readers never block on this frame
             let gray = Frame::gray(0, frame.poc, &frame);
             for r in 0..frame.num_rows() {
@@ -597,7 +603,7 @@ fn run_job(
                     frame.publish(r, crate::picture::FrameRow { y: row.y.clone(), cb: row.cb.clone(), cr: row.cr.clone(), col: row.col.clone() });
                 }
             }
-            (None, Some(Error::Invalid("internal error while decoding a picture".into())))
+            None
         }
     };
     if let Ok(mut s) = shared.stats.lock() {
@@ -614,8 +620,14 @@ fn run_job(
             }
         }
     }
-    if let (Some(e), Ok(mut slot)) = (err, shared.error.lock()) {
-        slot.get_or_insert(e);
+    frame.finish_job();
+}
+
+fn record_error(shared: &Shared, frame_id: u32, error: Error) {
+    if let Ok(mut slot) = shared.error.lock()
+        && slot.as_ref().is_none_or(|(id, _)| frame_id < *id)
+    {
+        *slot = Some((frame_id, error));
     }
 }
 
