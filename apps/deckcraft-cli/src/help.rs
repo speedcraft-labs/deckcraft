@@ -158,6 +158,16 @@ median and slowest of N runs (5 by default, 1 to 1000) as a table, or as JSON wi
   deckcraft-cli bench deck.pptx --runs 10",
     },
     Subcommand {
+        name: "bench-drag",
+        usage: "bench-drag FILE [--slide INDEX] [--shape INDEX] [--frames N]",
+        summary: "time and record every CPU render frame of a shape drag",
+        details: "Moves one shape through a deterministic sequence on a real slide and records each CPU render time,
+the rendered pixel hash and slide dimensions as JSON. Slide and shape indices are zero-based; defaults
+are slide 0, shape 0 and 30 frames.
+
+  deckcraft-cli bench-drag deck.pptx --slide 23 --shape 2 --frames 30",
+    },
+    Subcommand {
         name: "links",
         usage: "links",
         summary: "print the DeckCraft community and project links",

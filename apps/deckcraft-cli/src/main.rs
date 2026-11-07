@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use deckcraft_engine::Session;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 static STDOUT_CLOSED: AtomicBool = AtomicBool::new(false);
 
@@ -67,6 +68,7 @@ fn main() -> ExitCode {
         }
         Some("info") => report(info(rest)),
         Some("bench") => report(bench(rest)),
+        Some("bench-drag") => report(bench_drag(rest)),
         Some("render") => report(render(rest)),
         Some("render-transition") => report(render_transition(rest)),
         Some("convert") => report(convert(rest)),
@@ -260,6 +262,94 @@ fn bench(args: &[String]) -> Result<(), String> {
             outln!("  peak memory              {p:>9.1} MiB");
         }
     }
+    Ok(())
+}
+
+/// Measure a real selection drag as a series of CPU slide renders. The JSON deliberately keeps
+/// every frame sample so the journey artifact can show the per-frame distribution.
+fn bench_drag(args: &[String]) -> Result<(), String> {
+    use deckcraft_engine::cmd::file::open_presentation;
+    let mut input = None;
+    let mut slide_index = 0usize;
+    let mut shape_index = 0usize;
+    let mut frames = 30usize;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--slide" => slide_index = it.next().and_then(|v| v.parse().ok()).ok_or("--slide needs a zero-based slide index")?,
+            "--shape" => shape_index = it.next().and_then(|v| v.parse().ok()).ok_or("--shape needs a zero-based shape index")?,
+            "--frames" => {
+                frames = it.next().and_then(|v| v.parse().ok()).filter(|n| (2..=1000).contains(n)).ok_or("--frames needs a number from 2 to 1000")?
+            }
+            f if !f.starts_with("--") && input.is_none() => input = Some(f.to_string()),
+            o => return Err(format!("bench-drag: unknown argument `{o}`")),
+        }
+    }
+    let path = input.ok_or("bench-drag needs a FILE")?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    let mut doc = open_presentation(&path, &bytes).map_err(|e| e.to_string())?;
+    let slide = doc.slides.get(slide_index).ok_or("--slide is outside the presentation")?;
+    let shape = slide.shapes.get(shape_index).ok_or("--shape is outside the selected slide")?;
+    let xfrm = shape.xfrm.ok_or("selected shape has no explicit transform")?;
+    let (origin_x, origin_y) = (xfrm.x, xfrm.y);
+    let size = (960, 540);
+    let visible = deckcraft_engine::render::Region::slide(size.0, size.1);
+    let ctx = egui::Context::default();
+    let mut textures = deckcraft_ui_egui::textures::Textures::default();
+
+    // Exercise the same retained canvas texture path as the editor. Warm its font/renderer caches
+    // and make the slide uniquely mutable before the measured drag starts.
+    let _ =
+        textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be initialized")?;
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[slide_index]);
+    if let Some(xfrm) = slide.shapes.get_mut(shape_index).and_then(|shape| shape.xfrm.as_mut()) {
+        xfrm.x = origin_x;
+        xfrm.y = origin_y;
+    }
+    let _ = textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be warmed")?;
+
+    let mut frame_ms = Vec::with_capacity(frames);
+    for frame in 0..frames {
+        let started = std::time::Instant::now();
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[slide_index]);
+        let xfrm = slide.shapes.get_mut(shape_index).and_then(|shape| shape.xfrm.as_mut()).ok_or("selected shape lost its transform")?;
+        let offset = frame as f64 * 3.0;
+        xfrm.x = origin_x + offset;
+        xfrm.y = origin_y + offset * 0.4;
+        let _ =
+            textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be updated")?;
+        frame_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    let (p50_ms, p95_ms) = {
+        let mut sorted = frame_ms.clone();
+        sorted.sort_by(f64::total_cmp);
+        (sorted[sorted.len() / 2], sorted[((sorted.len() * 95).div_ceil(100) - 1).min(sorted.len() - 1)])
+    };
+    // Hash the canonical full renderer output outside the timed section. The actual texture
+    // partial-update path is independently checked against full renders by its regression test.
+    let expected = deckcraft_engine::render::render_slide(
+        &doc,
+        slide_index,
+        &deckcraft_engine::render::RenderOpts { scale: 1.0, size: Some(size), edit: true, ..Default::default() },
+    );
+    let pixel_hash = format!("{:x}", Sha256::digest(&expected.pixels));
+    let shape_count = doc.slides[slide_index].shapes.len();
+    outln!(
+        "{}",
+        serde_json::to_string(&json!({
+            "file": path,
+            "slide": slide_index,
+            "shape": shape_index,
+            "shapes_on_slide": shape_count,
+            "frames": frame_ms.len(),
+            "p50_frame_ms": p50_ms,
+            "p95_frame_ms": p95_ms,
+            "frame_ms": frame_ms,
+        "viewport_px": size,
+        "pixel_hash_sha256": pixel_hash,
+        }))
+        .unwrap_or_default()
+    );
     Ok(())
 }
 

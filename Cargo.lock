@@ -1059,7 +1059,10 @@ version = "0.15.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-mcp",
+ "deckcraft-ui-egui",
+ "egui",
  "serde_json",
+ "sha2",
  "zip 3.0.0",
 ]
 
