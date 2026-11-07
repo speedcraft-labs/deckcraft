@@ -309,7 +309,9 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
     let _ = textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be warmed")?;
 
     let mut frame_ms = Vec::with_capacity(frames);
+    let mut render_passes_per_frame = Vec::with_capacity(frames);
     for frame in 0..frames {
+        let renders_before = textures.canvas_renders;
         let started = std::time::Instant::now();
         let slide = std::sync::Arc::make_mut(&mut doc.slides[slide_index]);
         let xfrm = slide.shapes.get_mut(shape_index).and_then(|shape| shape.xfrm.as_mut()).ok_or("selected shape lost its transform")?;
@@ -318,15 +320,16 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
         xfrm.y = origin_y + offset * 0.4;
         let _ =
             textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be updated")?;
-        frame_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        let elapsed = started.elapsed();
+        frame_ms.push(elapsed.as_secs_f64() * 1000.0);
+        render_passes_per_frame.push(textures.canvas_renders - renders_before);
     }
     let (p50_ms, p95_ms) = {
         let mut sorted = frame_ms.clone();
         sorted.sort_by(f64::total_cmp);
         (sorted[sorted.len() / 2], sorted[((sorted.len() * 95).div_ceil(100) - 1).min(sorted.len() - 1)])
     };
-    // Hash the canonical full renderer output outside the timed section. The actual texture
-    // partial-update path is independently checked against full renders by its regression test.
+    // Hash the canonical full renderer output outside the timed section.
     let expected = deckcraft_engine::render::render_slide(
         &doc,
         slide_index,
@@ -345,8 +348,9 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
             "p50_frame_ms": p50_ms,
             "p95_frame_ms": p95_ms,
             "frame_ms": frame_ms,
-        "viewport_px": size,
-        "pixel_hash_sha256": pixel_hash,
+            "render_passes_per_frame": render_passes_per_frame,
+            "viewport_px": size,
+            "pixel_hash_sha256": pixel_hash,
         }))
         .unwrap_or_default()
     );
