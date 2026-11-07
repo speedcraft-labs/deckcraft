@@ -29,7 +29,8 @@ deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
 # codecs (ported from FilmCraft, same owner and licence)
 deckcraft-bitstream = { path = "crates/bitstream" }
-deckcraft-h264 = { path = "crates/h264" }
+deckcraft-h264 = { package = "craft-h264", git = "https://github.com/speedcraft-labs/craft-libs", rev = "20cc6894fc3acf56042ab2b5144642ead4e487bd" }
+# Keep DeckCraft's HEVC decoder: the conformance oracle decodes 7 pictures here, while craft-hevc 20cc errors at unit 0.
 deckcraft-hevc = { path = "crates/hevc" }
 deckcraft-vp9 = { path = "crates/vp9" }
 deckcraft-av1 = { path = "crates/av1" }

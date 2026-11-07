@@ -37,6 +37,7 @@ pub struct Frame {
     pub bit_depth: u32,
     pub bit_depth_c: u32,
     rows: Box<[OnceLock<FrameRow>]>,
+    job_done: OnceLock<()>,
 }
 
 impl Frame {
@@ -53,7 +54,23 @@ impl Frame {
             bit_depth,
             bit_depth_c,
             rows: (0..n).map(|_| OnceLock::new()).collect(),
+            job_done: OnceLock::new(),
         }
+    }
+
+    /// Whether the picture worker has finished decoding and recorded any error.
+    pub fn is_job_complete(&self) -> bool {
+        self.job_done.get().is_some()
+    }
+
+    /// Mark the picture worker finished. Called after its error has been recorded.
+    pub fn finish_job(&self) {
+        let _ = self.job_done.set(());
+    }
+
+    /// Wait for the picture worker, including its final error report.
+    pub fn wait_job_complete(&self) {
+        self.job_done.wait();
     }
 
     pub fn num_rows(&self) -> usize {
@@ -93,12 +110,6 @@ impl Frame {
         #[cfg(not(feature = "threads"))]
         {
             self.rows[r].get().expect("reference row decoded before use")
-        }
-    }
-
-    pub fn wait_complete(&self) {
-        for r in 0..self.rows.len() {
-            self.row(r);
         }
     }
 

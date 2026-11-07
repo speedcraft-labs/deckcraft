@@ -845,9 +845,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-bitstream"
+version = "0.1.0"
+source = "git+https://github.com/speedcraft-labs/craft-libs?rev=20cc6894fc3acf56042ab2b5144642ead4e487bd#20cc6894fc3acf56042ab2b5144642ead4e487bd"
+dependencies = [
+ "craft-media 0.1.0 (git+https://github.com/speedcraft-labs/craft-libs?rev=20cc6894fc3acf56042ab2b5144642ead4e487bd)",
+]
+
+[[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+
+[[package]]
+name = "craft-h264"
+version = "0.1.0"
+source = "git+https://github.com/speedcraft-labs/craft-libs?rev=20cc6894fc3acf56042ab2b5144642ead4e487bd#20cc6894fc3acf56042ab2b5144642ead4e487bd"
+dependencies = [
+ "craft-bitstream",
+ "rayon",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "craft-i18n"
@@ -870,6 +888,14 @@ dependencies = [
  "unicode-bidi",
  "windows-registry",
  "writeable",
+]
+
+[[package]]
+name = "craft-media"
+version = "0.1.0"
+source = "git+https://github.com/speedcraft-labs/craft-libs?rev=20cc6894fc3acf56042ab2b5144642ead4e487bd#20cc6894fc3acf56042ab2b5144642ead4e487bd"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1050,7 +1076,7 @@ dependencies = [
 name = "deckcraft-bitstream"
 version = "0.15.0"
 dependencies = [
- "craft-media",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7)",
 ]
 
 [[package]]
@@ -1131,15 +1157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deckcraft-h264"
-version = "0.15.0"
-dependencies = [
- "deckcraft-bitstream",
- "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "deckcraft-hevc"
 version = "0.15.0"
 dependencies = [
@@ -1152,14 +1169,14 @@ dependencies = [
 name = "deckcraft-isobmff"
 version = "0.15.0"
 dependencies = [
- "craft-media",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7)",
 ]
 
 [[package]]
 name = "deckcraft-matroska"
 version = "0.15.0"
 dependencies = [
- "craft-media",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7)",
 ]
 
 [[package]]
@@ -1176,8 +1193,8 @@ dependencies = [
 name = "deckcraft-media"
 version = "0.15.0"
 dependencies = [
+ "craft-h264",
  "deckcraft-av1",
- "deckcraft-h264",
  "deckcraft-hevc",
  "deckcraft-isobmff",
  "deckcraft-matroska",
