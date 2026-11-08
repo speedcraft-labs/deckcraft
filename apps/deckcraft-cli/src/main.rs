@@ -349,22 +349,25 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
         }
         let (base, overlay, rect, region, scale) = textures.drag_preview_layers().ok_or("GPU preview layers were not retained for comparison")?;
         let result = gpu_drag::benchmark(&base, &overlay, rect, region, scale, frames)?;
+        let full_mae =
+            normalized_rgba_frame_mae(&result.final_pixels, &expected.pixels).ok_or("GPU and CPU corpus frames have different dimensions")?;
         let mae = normalized_rgba_region_mae(&result.final_pixels, &expected.pixels, base.width, base.height, rect, region, scale)
             .ok_or("GPU and CPU corpus frames have different dimensions or the selected shape is off-screen")?;
-        if mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE {
+        if mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE || full_mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE
+        {
             return Err(format!(
-                "GPU preview differs from the CPU renderer: normalized RGBA MAE {mae:.6} exceeds {:.2}",
-                deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE
+                "GPU preview differs from the CPU renderer: selected-shape MAE {mae:.6}, full-frame MAE {full_mae:.6}, limit {:.2}",
+                deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE,
             ));
         }
         eprintln!("adapter: {}", result.adapter);
         let combined_frame_ms: Vec<f64> = frame_ms.iter().zip(&result.frame_ms).map(|(cpu_prepare, gpu_compose)| cpu_prepare + gpu_compose).collect();
-        Some((result, mae, combined_frame_ms))
+        Some((result, mae, full_mae, combined_frame_ms))
     } else {
         None
     };
     let _ = textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None, None).ok_or("canvas texture could not settle")?;
-    let (p50_ms, p95_ms) = if let Some((_, _, combined_frame_ms)) = &gpu_result {
+    let (p50_ms, p95_ms) = if let Some((_, _, _, combined_frame_ms)) = &gpu_result {
         let mut sorted = combined_frame_ms.clone();
         sorted.sort_by(f64::total_cmp);
         (sorted[sorted.len() / 2], sorted[((sorted.len() * 95).div_ceil(100) - 1).min(sorted.len() - 1)])
@@ -386,14 +389,15 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
             "cpu_p50_frame_ms": cpu_p50_ms,
             "cpu_p95_frame_ms": cpu_p95_ms,
             "frame_ms": frame_ms,
-            "gpu_frame_ms": gpu_result.as_ref().map(|(result, _, _)| &result.gpu_pass_ms),
-            "gpu_cpu_submit_ms": gpu_result.as_ref().map(|(result, _, _)| &result.cpu_submit_ms),
+            "gpu_frame_ms": gpu_result.as_ref().map(|(result, _, _, _)| &result.gpu_pass_ms),
+            "gpu_cpu_submit_ms": gpu_result.as_ref().map(|(result, _, _, _)| &result.cpu_submit_ms),
             "gpu_cpu_prepare_ms": gpu_result.as_ref().map(|_| &frame_ms),
-            "gpu_composite_frame_ms": gpu_result.as_ref().map(|(_, _, combined)| combined),
-            "gpu_preview_mae": gpu_result.as_ref().map(|(_, mae, _)| mae),
-            "gpu_preview_error_metric": "normalized RGBA MAE inside selected-shape bounds",
+            "gpu_composite_frame_ms": gpu_result.as_ref().map(|(_, _, _, combined)| combined),
+            "gpu_preview_mae": gpu_result.as_ref().map(|(_, mae, _, _)| mae),
+            "gpu_preview_full_mae": gpu_result.as_ref().map(|(_, _, full_mae, _)| full_mae),
+            "gpu_preview_error_metric": "normalized RGBA MAE inside selected-shape bounds and full frame",
             "gpu_preview_error_limit": deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE,
-            "gpu_adapter": gpu_result.as_ref().map(|(result, _, _)| &result.adapter),
+            "gpu_adapter": gpu_result.as_ref().map(|(result, _, _, _)| &result.adapter),
             "render_passes_per_frame": render_passes_per_frame,
             "gpu_preview_frames": gpu_preview_frames,
             "viewport_px": size,
@@ -434,6 +438,14 @@ fn normalized_rgba_region_mae(
         }
     }
     Some(sum as f64 / (count as f64 * 255.0))
+}
+
+fn normalized_rgba_frame_mae(a: &[u8], b: &[u8]) -> Option<f64> {
+    if a.is_empty() || a.len() != b.len() {
+        return None;
+    }
+    let sum: u64 = a.iter().zip(b).map(|(x, y)| u64::from(x.abs_diff(*y))).sum();
+    Some(sum as f64 / (a.len() as f64 * 255.0))
 }
 
 fn info(args: &[String]) -> Result<(), String> {
