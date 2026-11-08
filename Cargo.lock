@@ -1092,6 +1092,7 @@ dependencies = [
  "pollster 0.4.0",
  "serde_json",
  "sha2",
+ "wgpu",
  "zip 3.0.0",
 ]
 
