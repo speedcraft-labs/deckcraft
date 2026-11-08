@@ -349,10 +349,18 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
         }
         let (base, overlay, rect, region, scale) = textures.drag_preview_layers().ok_or("GPU preview layers were not retained for comparison")?;
         let result = gpu_drag::benchmark(&base, &overlay, rect, region, scale, frames)?;
-        let full_mae =
-            normalized_rgba_frame_mae(&result.final_pixels, &expected.pixels).ok_or("GPU and CPU corpus frames have different dimensions")?;
-        let mae = normalized_rgba_region_mae(&result.final_pixels, &expected.pixels, base.width, base.height, rect, region, scale)
-            .ok_or("GPU and CPU corpus frames have different dimensions or the selected shape is off-screen")?;
+        let expected_canvas = deckcraft_engine::render::render_slide(
+            &doc,
+            slide_index,
+            &deckcraft_engine::render::RenderOpts { scale, size: Some(region.size()), edit: true, offset: region.offset(), ..Default::default() },
+        );
+        if expected_canvas.width != base.width || expected_canvas.height != base.height {
+            return Err("GPU and CPU corpus canvas regions have different dimensions".into());
+        }
+        let full_mae = normalized_rgba_frame_mae(&result.final_pixels, &expected_canvas.pixels)
+            .ok_or("GPU and CPU corpus canvas regions have different dimensions")?;
+        let mae = normalized_rgba_region_mae(&result.final_pixels, &expected_canvas.pixels, base.width, base.height, rect, region, scale)
+            .ok_or("GPU and CPU corpus canvas regions differ or the selected shape is off-screen")?;
         if mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE || full_mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE
         {
             return Err(format!(
@@ -395,7 +403,7 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
             "gpu_composite_frame_ms": gpu_result.as_ref().map(|(_, _, _, combined)| combined),
             "gpu_preview_mae": gpu_result.as_ref().map(|(_, mae, _, _)| mae),
             "gpu_preview_full_mae": gpu_result.as_ref().map(|(_, _, full_mae, _)| full_mae),
-            "gpu_preview_error_metric": "normalized RGBA MAE inside selected-shape bounds and full frame",
+            "gpu_preview_error_metric": "normalized RGBA MAE inside selected-shape bounds and full canvas frame",
             "gpu_preview_error_limit": deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE,
             "gpu_adapter": gpu_result.as_ref().map(|(result, _, _, _)| &result.adapter),
             "render_passes_per_frame": render_passes_per_frame,
