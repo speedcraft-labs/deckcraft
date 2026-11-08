@@ -319,6 +319,25 @@ fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm,
     Some((index, old.shapes[index].xfrm?, new.shapes[index].xfrm?))
 }
 
+/// A dragged layer is painted above every later shape, so only use it when their visible bounds
+/// stay clear. Complex later shapes fall back to CPU because their bounds can extend past xfrm.
+fn later_shapes_overlap(slide: &Slide, index: usize, moved: deckcraft_geom::Xfrm) -> bool {
+    let moved = moved.bounds().inflate(8.0, 8.0);
+    slide.shapes.iter().skip(index + 1).filter(|shape| !shape.hidden).any(|shape| {
+        if !matches!(&shape.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
+            || !matches!(&shape.geom, Geom::Preset { .. })
+            || shape.text.is_some()
+            || shape.effects.as_ref().is_some_and(|effects| !effects.is_empty())
+            || shape.ph.is_some()
+        {
+            return true;
+        }
+        let Some(xfrm) = shape.xfrm else { return true };
+        let bounds = xfrm.bounds().inflate(16.0, 16.0);
+        moved.x0 < bounds.x1 && bounds.x0 < moved.x1 && moved.y0 < bounds.y1 && bounds.y0 < moved.y1
+    })
+}
+
 /// A conservative pixel region for a slide whose only change is translating one plain shape or
 /// picture. Effects, text, groups, rotations and size changes fall back to the full renderer.
 fn moved_shape_region(_index: usize, a: deckcraft_geom::Xfrm, b: deckcraft_geom::Xfrm, scale: f64, texture: Region) -> Option<(Region, [usize; 2])> {
@@ -483,6 +502,7 @@ impl Textures {
                 && same(&preview.master, &master)
                 && let Some((shape_index, _, new_xfrm)) = moved
                 && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected && shape.id == preview.shape)
+                && !later_shapes_overlap(&slide, shape_index, new_xfrm)
                 && let Some(entry) = self.canvas.as_ref()
             {
                 if let Some(preview) = self.drag_preview.as_mut() {
@@ -521,6 +541,7 @@ impl Textures {
             && let Some(selected) = dragging_shape
             && let Some((shape_index, _, new_xfrm)) = movement
             && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected)
+            && !later_shapes_overlap(&slide, shape_index, new_xfrm)
             && let Some((entry_key, entry_slide, entry_master, region)) = self.canvas.as_ref().and_then(|entry| {
                 let mut comparable = key.clone();
                 comparable.slide = entry.key.slide;
@@ -746,6 +767,23 @@ mod tests {
         let r = Rect::from_min_size(pos2(3.0, 4.0), vec2(10.0, 12.0));
         assert_eq!(device_pixel_rect(r, 0.0), r);
         assert_eq!(device_pixel_rect(r, f32::NAN), r);
+    }
+
+    #[test]
+    fn a_drag_layer_falls_back_when_it_would_cover_a_later_shape() {
+        use deckcraft_geom::Xfrm;
+        use deckcraft_model::{Shape, ShapeId, Slide};
+
+        let slide = Slide {
+            shapes: vec![
+                Shape { id: ShapeId(1), xfrm: Some(Xfrm::new(0.0, 0.0, 20.0, 20.0)), ..Default::default() },
+                Shape { id: ShapeId(2), xfrm: Some(Xfrm::new(25.0, 0.0, 20.0, 20.0)), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let moved = Xfrm::new(0.0, 0.0, 20.0, 20.0);
+        assert!(super::later_shapes_overlap(&slide, 0, moved));
+        assert!(!super::later_shapes_overlap(&slide, 1, moved));
     }
 
     #[test]

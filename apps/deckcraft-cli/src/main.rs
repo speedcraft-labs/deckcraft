@@ -349,7 +349,8 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
         }
         let (base, overlay, rect, region, scale) = textures.drag_preview_layers().ok_or("GPU preview layers were not retained for comparison")?;
         let result = gpu_drag::benchmark(&base, &overlay, rect, region, scale, frames)?;
-        let mae = normalized_rgba_mae(&result.final_pixels, &expected.pixels).ok_or("GPU and CPU corpus frames have different dimensions")?;
+        let mae = normalized_rgba_region_mae(&result.final_pixels, &expected.pixels, base.width, base.height, rect, region, scale)
+            .ok_or("GPU and CPU corpus frames have different dimensions or the selected shape is off-screen")?;
         if mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE {
             return Err(format!(
                 "GPU preview differs from the CPU renderer: normalized RGBA MAE {mae:.6} exceeds {:.2}",
@@ -390,6 +391,7 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
             "gpu_cpu_prepare_ms": gpu_result.as_ref().map(|_| &frame_ms),
             "gpu_composite_frame_ms": gpu_result.as_ref().map(|(_, _, combined)| combined),
             "gpu_preview_mae": gpu_result.as_ref().map(|(_, mae, _)| mae),
+            "gpu_preview_error_metric": "normalized RGBA MAE inside selected-shape bounds",
             "gpu_preview_error_limit": deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE,
             "gpu_adapter": gpu_result.as_ref().map(|(result, _, _)| &result.adapter),
             "render_passes_per_frame": render_passes_per_frame,
@@ -402,12 +404,36 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn normalized_rgba_mae(a: &[u8], b: &[u8]) -> Option<f64> {
-    if a.is_empty() || a.len() != b.len() {
+fn normalized_rgba_region_mae(
+    a: &[u8],
+    b: &[u8],
+    width: u32,
+    height: u32,
+    rect: [f64; 4],
+    region: deckcraft_engine::render::Region,
+    scale: f64,
+) -> Option<f64> {
+    if width == 0 || height == 0 || a.len() != b.len() || a.len() != width as usize * height as usize * 4 || !scale.is_finite() || scale <= 0.0 {
         return None;
     }
-    let sum: u64 = a.iter().zip(b).map(|(x, y)| u64::from(x.abs_diff(*y))).sum();
-    Some(sum as f64 / (a.len() as f64 * 255.0))
+    let pixel = |coord: f64, origin: i32, limit: u32| ((coord * scale - f64::from(origin)).floor() as i64).clamp(0, i64::from(limit)) as usize;
+    let (x0, y0, x1, y1) =
+        (pixel(rect[0], region.x, width), pixel(rect[1], region.y, height), pixel(rect[2], region.x, width), pixel(rect[3], region.y, height));
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
+    let mut sum = 0u64;
+    let mut count = 0u64;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let offset = (y * width as usize + x) * 4;
+            for channel in 0..4 {
+                sum += u64::from(a[offset + channel].abs_diff(b[offset + channel]));
+                count += 1;
+            }
+        }
+    }
+    Some(sum as f64 / (count as f64 * 255.0))
 }
 
 fn info(args: &[String]) -> Result<(), String> {
