@@ -289,24 +289,11 @@ fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm,
         if changed.replace(index).is_some() {
             return None;
         }
+        if !drag_shape_is_simple(before) || !drag_shape_is_simple(after) {
+            return None;
+        }
         let (Some(a), Some(b)) = (before.xfrm, after.xfrm) else { return None };
-        if !matches!(&before.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
-            || !matches!(&before.geom, Geom::Preset { .. })
-            || before.text.is_some()
-            || before.effects.as_ref().is_some_and(|effects| !effects.is_empty())
-            || before.ph.is_some()
-            || before.style.as_ref().is_some_and(|style| style.effect_ref.0 != 0)
-            || !before.line.as_ref().is_some_and(|line| line.fill.as_ref().is_some_and(Fill::is_none))
-            || before.hidden
-            || !a.is_finite()
-            || !b.is_finite()
-            || a.w != b.w
-            || a.h != b.h
-            || a.rot != 0.0
-            || a.rot != b.rot
-            || a.flip_h != b.flip_h
-            || a.flip_v != b.flip_v
-        {
+        if a.w != b.w || a.h != b.h || a.flip_h != b.flip_h || a.flip_v != b.flip_v {
             return None;
         }
         let mut reverted = after.clone();
@@ -317,6 +304,18 @@ fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm,
     }
     let Some(index) = changed else { return None };
     Some((index, old.shapes[index].xfrm?, new.shapes[index].xfrm?))
+}
+
+fn drag_shape_is_simple(shape: &deckcraft_model::Shape) -> bool {
+    shape.xfrm.is_some_and(|xfrm| xfrm.is_finite() && xfrm.rot == 0.0)
+        && matches!(&shape.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
+        && matches!(&shape.geom, Geom::Preset { .. })
+        && shape.text.is_none()
+        && !shape.effects.as_ref().is_some_and(|effects| !effects.is_empty())
+        && shape.ph.is_none()
+        && !shape.style.as_ref().is_some_and(|style| style.effect_ref.0 != 0)
+        && shape.line.as_ref().is_some_and(|line| line.fill.as_ref().is_some_and(Fill::is_none))
+        && !shape.hidden
 }
 
 /// A dragged layer is painted above every later shape, so only use it when their visible bounds
@@ -497,10 +496,16 @@ impl Textures {
             let mut comparable = key.clone();
             comparable.slide = preview.key.slide;
             let moved = moved_shape(&preview.slide, &slide);
+            let preview_target = moved.map(|(shape_index, _, new_xfrm)| (shape_index, new_xfrm)).or_else(|| {
+                if preview.slide.as_ref() != slide.as_ref() {
+                    return None;
+                }
+                slide.shapes.iter().enumerate().find(|(_, shape)| shape.id == preview.shape).and_then(|(i, shape)| shape.xfrm.map(|xfrm| (i, xfrm)))
+            });
             if let Some(selected) = dragging_shape
                 && comparable == preview.key
                 && same(&preview.master, &master)
-                && let Some((shape_index, _, new_xfrm)) = moved
+                && let Some((shape_index, new_xfrm)) = preview_target
                 && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected && shape.id == preview.shape)
                 && !later_shapes_overlap(&slide, shape_index, new_xfrm)
                 && let Some(entry) = self.canvas.as_ref()
@@ -515,6 +520,7 @@ impl Textures {
         }
         if let Some(e) = &self.canvas
             && e.key == key
+            && dragging_shape.is_none()
         {
             return Some((e.tex.clone(), e.region));
         }
@@ -535,11 +541,30 @@ impl Textures {
             };
             deckcraft_render::render_slide_drawn(p, index, &opts)
         };
+        let preview_target = dragging_shape.and_then(|selected| {
+            if let Some((shape_index, _, new_xfrm)) = movement
+                && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected)
+            {
+                return Some((shape_index, new_xfrm));
+            }
+            self.canvas.as_ref().and_then(|entry| {
+                let mut comparable = key.clone();
+                comparable.slide = entry.key.slide;
+                if entry.key != comparable || !same(&entry._master, &master) || entry._slide.as_ref() != slide.as_ref() {
+                    return None;
+                }
+                let (shape_index, shape) = slide.shapes.iter().enumerate().find(|(_, shape)| shape.id == selected)?;
+                if !drag_shape_is_simple(shape) {
+                    return None;
+                }
+                Some((shape_index, shape.xfrm?))
+            })
+        });
         if anim.is_none()
             && gif_times.is_empty()
             && editing_text.is_none()
             && let Some(selected) = dragging_shape
-            && let Some((shape_index, _, new_xfrm)) = movement
+            && let Some((shape_index, new_xfrm)) = preview_target
             && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected)
             && !later_shapes_overlap(&slide, shape_index, new_xfrm)
             && let Some((entry_key, entry_slide, entry_master, region)) = self.canvas.as_ref().and_then(|entry| {
