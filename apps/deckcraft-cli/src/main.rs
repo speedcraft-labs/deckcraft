@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod automation_args;
+mod gpu_drag;
 
 mod help;
 
@@ -291,6 +292,7 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
     let slide = doc.slides.get(slide_index).ok_or("--slide is outside the presentation")?;
     let shape = slide.shapes.get(shape_index).ok_or("--shape is outside the selected slide")?;
     let xfrm = shape.xfrm.ok_or("selected shape has no explicit transform")?;
+    let shape_id = shape.id;
     let (origin_x, origin_y) = (xfrm.x, xfrm.y);
     let size = (960, 540);
     let visible = deckcraft_engine::render::Region::slide(size.0, size.1);
@@ -299,17 +301,20 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
 
     // Exercise the same retained canvas texture path as the editor. Warm its font/renderer caches
     // and make the slide uniquely mutable before the measured drag starts.
-    let _ =
-        textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be initialized")?;
+    let _ = textures
+        .slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None, None)
+        .ok_or("canvas texture could not be initialized")?;
     let slide = std::sync::Arc::make_mut(&mut doc.slides[slide_index]);
     if let Some(xfrm) = slide.shapes.get_mut(shape_index).and_then(|shape| shape.xfrm.as_mut()) {
         xfrm.x = origin_x;
         xfrm.y = origin_y;
     }
-    let _ = textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be warmed")?;
+    let _ =
+        textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None, None).ok_or("canvas texture could not be warmed")?;
 
     let mut frame_ms = Vec::with_capacity(frames);
     let mut render_passes_per_frame = Vec::with_capacity(frames);
+    let mut gpu_preview_frames = 0usize;
     for frame in 0..frames {
         let renders_before = textures.canvas_renders;
         let started = std::time::Instant::now();
@@ -318,13 +323,15 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
         let offset = frame as f64 * 3.0;
         xfrm.x = origin_x + offset;
         xfrm.y = origin_y + offset * 0.4;
-        let _ =
-            textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None).ok_or("canvas texture could not be updated")?;
+        let _ = textures
+            .slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None, Some(shape_id))
+            .ok_or("canvas texture could not be updated")?;
+        gpu_preview_frames += usize::from(textures.drag_preview().is_some());
         let elapsed = started.elapsed();
         frame_ms.push(elapsed.as_secs_f64() * 1000.0);
         render_passes_per_frame.push(textures.canvas_renders - renders_before);
     }
-    let (p50_ms, p95_ms) = {
+    let (cpu_p50_ms, cpu_p95_ms) = {
         let mut sorted = frame_ms.clone();
         sorted.sort_by(f64::total_cmp);
         (sorted[sorted.len() / 2], sorted[((sorted.len() * 95).div_ceil(100) - 1).min(sorted.len() - 1)])
@@ -335,6 +342,34 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
         slide_index,
         &deckcraft_engine::render::RenderOpts { scale: 1.0, size: Some(size), edit: true, ..Default::default() },
     );
+    let gpu_check = std::env::var("DECKCRAFT_GPU_DIFF_CHECK").as_deref() == Ok("1");
+    let gpu_result = if gpu_check {
+        if gpu_preview_frames != frames {
+            return Err(format!("GPU drag preview ran for {gpu_preview_frames} of {frames} corpus frames"));
+        }
+        let (base, overlay, rect, region, scale) = textures.drag_preview_layers().ok_or("GPU preview layers were not retained for comparison")?;
+        let result = gpu_drag::benchmark(&base, &overlay, rect, region, scale, frames)?;
+        let mae = normalized_rgba_mae(&result.final_pixels, &expected.pixels).ok_or("GPU and CPU corpus frames have different dimensions")?;
+        if mae > deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE {
+            return Err(format!(
+                "GPU preview differs from the CPU renderer: normalized RGBA MAE {mae:.6} exceeds {:.2}",
+                deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE
+            ));
+        }
+        eprintln!("adapter: {}", result.adapter);
+        let combined_frame_ms: Vec<f64> = frame_ms.iter().zip(&result.frame_ms).map(|(cpu_prepare, gpu_compose)| cpu_prepare + gpu_compose).collect();
+        Some((result, mae, combined_frame_ms))
+    } else {
+        None
+    };
+    let _ = textures.slide(&ctx, &doc, slide_index, size, visible, true, 0, false, &[], None, None, None).ok_or("canvas texture could not settle")?;
+    let (p50_ms, p95_ms) = if let Some((_, _, combined_frame_ms)) = &gpu_result {
+        let mut sorted = combined_frame_ms.clone();
+        sorted.sort_by(f64::total_cmp);
+        (sorted[sorted.len() / 2], sorted[((sorted.len() * 95).div_ceil(100) - 1).min(sorted.len() - 1)])
+    } else {
+        (cpu_p50_ms, cpu_p95_ms)
+    };
     let pixel_hash = format!("{:x}", Sha256::digest(&expected.pixels));
     let shape_count = doc.slides[slide_index].shapes.len();
     outln!(
@@ -347,14 +382,32 @@ fn bench_drag(args: &[String]) -> Result<(), String> {
             "frames": frame_ms.len(),
             "p50_frame_ms": p50_ms,
             "p95_frame_ms": p95_ms,
+            "cpu_p50_frame_ms": cpu_p50_ms,
+            "cpu_p95_frame_ms": cpu_p95_ms,
             "frame_ms": frame_ms,
+            "gpu_frame_ms": gpu_result.as_ref().map(|(result, _, _)| &result.gpu_pass_ms),
+            "gpu_cpu_submit_ms": gpu_result.as_ref().map(|(result, _, _)| &result.cpu_submit_ms),
+            "gpu_cpu_prepare_ms": gpu_result.as_ref().map(|_| &frame_ms),
+            "gpu_composite_frame_ms": gpu_result.as_ref().map(|(_, _, combined)| combined),
+            "gpu_preview_mae": gpu_result.as_ref().map(|(_, mae, _)| mae),
+            "gpu_preview_error_limit": deckcraft_ui_egui::textures::GPU_DRAG_PREVIEW_MAE_TOLERANCE,
+            "gpu_adapter": gpu_result.as_ref().map(|(result, _, _)| &result.adapter),
             "render_passes_per_frame": render_passes_per_frame,
+            "gpu_preview_frames": gpu_preview_frames,
             "viewport_px": size,
             "pixel_hash_sha256": pixel_hash,
         }))
         .unwrap_or_default()
     );
     Ok(())
+}
+
+fn normalized_rgba_mae(a: &[u8], b: &[u8]) -> Option<f64> {
+    if a.is_empty() || a.len() != b.len() {
+        return None;
+    }
+    let sum: u64 = a.iter().zip(b).map(|(x, y)| u64::from(x.abs_diff(*y))).sum();
+    Some(sum as f64 / (a.len() as f64 * 255.0))
 }
 
 fn info(args: &[String]) -> Result<(), String> {

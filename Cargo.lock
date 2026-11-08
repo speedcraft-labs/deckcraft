@@ -1083,10 +1083,13 @@ dependencies = [
 name = "deckcraft-cli"
 version = "0.15.0"
 dependencies = [
+ "bytemuck",
  "deckcraft-engine",
  "deckcraft-mcp",
  "deckcraft-ui-egui",
  "egui",
+ "egui-wgpu",
+ "pollster 0.4.0",
  "serde_json",
  "sha2",
  "zip 3.0.0",
