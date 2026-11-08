@@ -1,0 +1,205 @@
+{
+  "kind": "direct child-process diagnostic; 10 runs per side; ABBA schedule",
+  "records": [
+    {
+      "order": 0,
+      "side": "old",
+      "wall_ns": 969610956,
+      "child_cpu_ns": 1140572999,
+      "p50_frame_ms": 14.105208,
+      "p95_frame_ms": 19.722088,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 1,
+      "side": "new",
+      "wall_ns": 602940313,
+      "child_cpu_ns": 643026000,
+      "p50_frame_ms": 1.079817,
+      "p95_frame_ms": 3.061098,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 2,
+      "side": "new",
+      "wall_ns": 667409229,
+      "child_cpu_ns": 712390999,
+      "p50_frame_ms": 1.946226,
+      "p95_frame_ms": 3.8165500000000003,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 3,
+      "side": "old",
+      "wall_ns": 1103277708,
+      "child_cpu_ns": 1294962000,
+      "p50_frame_ms": 15.346198,
+      "p95_frame_ms": 21.979844,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 4,
+      "side": "old",
+      "wall_ns": 912707550,
+      "child_cpu_ns": 1074975000,
+      "p50_frame_ms": 15.314149,
+      "p95_frame_ms": 16.882429000000002,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 5,
+      "side": "new",
+      "wall_ns": 613828669,
+      "child_cpu_ns": 652502999,
+      "p50_frame_ms": 1.497947,
+      "p95_frame_ms": 2.114676,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 6,
+      "side": "new",
+      "wall_ns": 565089698,
+      "child_cpu_ns": 610288999,
+      "p50_frame_ms": 1.170567,
+      "p95_frame_ms": 8.159837,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 7,
+      "side": "old",
+      "wall_ns": 966105448,
+      "child_cpu_ns": 1125724000,
+      "p50_frame_ms": 14.658927,
+      "p95_frame_ms": 23.8572,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 8,
+      "side": "old",
+      "wall_ns": 930778242,
+      "child_cpu_ns": 1084008000,
+      "p50_frame_ms": 14.052388,
+      "p95_frame_ms": 18.193561,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 9,
+      "side": "new",
+      "wall_ns": 525046507,
+      "child_cpu_ns": 560075999,
+      "p50_frame_ms": 1.222215,
+      "p95_frame_ms": 1.85832,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 10,
+      "side": "new",
+      "wall_ns": 571626640,
+      "child_cpu_ns": 606999000,
+      "p50_frame_ms": 1.501595,
+      "p95_frame_ms": 2.683934,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 11,
+      "side": "old",
+      "wall_ns": 874205111,
+      "child_cpu_ns": 1034266999,
+      "p50_frame_ms": 12.097294999999999,
+      "p95_frame_ms": 19.022022,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 12,
+      "side": "old",
+      "wall_ns": 770851841,
+      "child_cpu_ns": 905154000,
+      "p50_frame_ms": 11.338838,
+      "p95_frame_ms": 13.418698,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 13,
+      "side": "new",
+      "wall_ns": 484864617,
+      "child_cpu_ns": 518465000,
+      "p50_frame_ms": 0.957203,
+      "p95_frame_ms": 1.4020059999999999,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 14,
+      "side": "new",
+      "wall_ns": 463318254,
+      "child_cpu_ns": 499950999,
+      "p50_frame_ms": 1.024631,
+      "p95_frame_ms": 2.359611,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 15,
+      "side": "old",
+      "wall_ns": 714785871,
+      "child_cpu_ns": 843997000,
+      "p50_frame_ms": 9.855989000000001,
+      "p95_frame_ms": 16.884812999999998,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 16,
+      "side": "old",
+      "wall_ns": 844585056,
+      "child_cpu_ns": 1002938999,
+      "p50_frame_ms": 14.410957,
+      "p95_frame_ms": 20.269944000000002,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    },
+    {
+      "order": 17,
+      "side": "new",
+      "wall_ns": 462839737,
+      "child_cpu_ns": 500475000,
+      "p50_frame_ms": 1.464885,
+      "p95_frame_ms": 1.992804,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 18,
+      "side": "new",
+      "wall_ns": 560196729,
+      "child_cpu_ns": 601960999,
+      "p50_frame_ms": 1.338787,
+      "p95_frame_ms": 4.113111,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 30
+    },
+    {
+      "order": 19,
+      "side": "old",
+      "wall_ns": 994331524,
+      "child_cpu_ns": 1171312000,
+      "p50_frame_ms": 13.849924,
+      "p95_frame_ms": 21.225065,
+      "pixel_hash_sha256": "8e6c6a0c79afefe0d0b9754f75cea4810b55b779a9473a9b12062ab41fabcbda",
+      "gpu_preview_frames": 0
+    }
+  ]
+}
