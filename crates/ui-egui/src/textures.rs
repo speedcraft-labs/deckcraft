@@ -36,9 +36,30 @@ struct Entry {
     stamp: u64,
 }
 
+struct GpuDragPreview {
+    key: Key,
+    shape: ShapeId,
+    slide: Arc<Slide>,
+    master: Option<Arc<Master>>,
+    texture: TextureHandle,
+    rect: [f64; 4],
+    comparison: Option<DragComparison>,
+}
+
+struct DragComparison {
+    base: Image,
+    overlay: Image,
+    region: Region,
+    scale: f64,
+}
+
+/// Maximum normalized RGBA mean absolute error for the GPU drag composition against vello_cpu.
+pub const GPU_DRAG_PREVIEW_MAE_TOLERANCE: f64 = 0.02;
+
 #[derive(Default)]
 pub struct Textures {
     canvas: Option<Entry>,
+    drag_preview: Option<GpuDragPreview>,
     /// How far the canvas slide's shapes reach (from their boxes), for the slide and master `Arc`s
     /// held (kept alive so their addresses can't be reused).
     estimate: Option<(Arc<Slide>, Option<Arc<Master>>, Rect)>,
@@ -57,6 +78,11 @@ pub struct Textures {
     smartart: HashMap<String, TextureHandle>,
     clock: u64,
     pub last_render_ms: f64,
+}
+
+fn shape_overlay_rect(xfrm: deckcraft_geom::Xfrm) -> [f64; 4] {
+    let bounds = xfrm.bounds().inflate(8.0, 8.0);
+    [bounds.x0, bounds.y0, bounds.x1, bounds.y1]
 }
 
 impl Textures {
@@ -263,24 +289,11 @@ fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm,
         if changed.replace(index).is_some() {
             return None;
         }
+        if !drag_shape_is_simple(before) || !drag_shape_is_simple(after) {
+            return None;
+        }
         let (Some(a), Some(b)) = (before.xfrm, after.xfrm) else { return None };
-        if !matches!(&before.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
-            || !matches!(&before.geom, Geom::Preset { .. })
-            || before.text.is_some()
-            || before.effects.as_ref().is_some_and(|effects| !effects.is_empty())
-            || before.ph.is_some()
-            || before.style.as_ref().is_some_and(|style| style.effect_ref.0 != 0)
-            || !before.line.as_ref().is_some_and(|line| line.fill.as_ref().is_some_and(Fill::is_none))
-            || before.hidden
-            || !a.is_finite()
-            || !b.is_finite()
-            || a.w != b.w
-            || a.h != b.h
-            || a.rot != 0.0
-            || a.rot != b.rot
-            || a.flip_h != b.flip_h
-            || a.flip_v != b.flip_v
-        {
+        if a.w != b.w || a.h != b.h || a.flip_h != b.flip_h || a.flip_v != b.flip_v {
             return None;
         }
         let mut reverted = after.clone();
@@ -291,6 +304,37 @@ fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm,
     }
     let Some(index) = changed else { return None };
     Some((index, old.shapes[index].xfrm?, new.shapes[index].xfrm?))
+}
+
+fn drag_shape_is_simple(shape: &deckcraft_model::Shape) -> bool {
+    shape.xfrm.is_some_and(|xfrm| xfrm.is_finite() && xfrm.rot == 0.0)
+        && matches!(&shape.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
+        && matches!(&shape.geom, Geom::Preset { .. })
+        && shape.text.is_none()
+        && !shape.effects.as_ref().is_some_and(|effects| !effects.is_empty())
+        && shape.ph.is_none()
+        && !shape.style.as_ref().is_some_and(|style| style.effect_ref.0 != 0)
+        && shape.line.as_ref().is_some_and(|line| line.fill.as_ref().is_some_and(Fill::is_none))
+        && !shape.hidden
+}
+
+/// A dragged layer is painted above every later shape, so only use it when their visible bounds
+/// stay clear. Complex later shapes fall back to CPU because their bounds can extend past xfrm.
+fn later_shapes_overlap(slide: &Slide, index: usize, moved: deckcraft_geom::Xfrm) -> bool {
+    let moved = moved.bounds().inflate(8.0, 8.0);
+    slide.shapes.iter().skip(index + 1).filter(|shape| !shape.hidden).any(|shape| {
+        if !matches!(&shape.kind, ShapeKind::Shape | ShapeKind::Picture { .. })
+            || !matches!(&shape.geom, Geom::Preset { .. })
+            || shape.text.is_some()
+            || shape.effects.as_ref().is_some_and(|effects| !effects.is_empty())
+            || shape.ph.is_some()
+        {
+            return true;
+        }
+        let Some(xfrm) = shape.xfrm else { return true };
+        let bounds = xfrm.bounds().inflate(16.0, 16.0);
+        moved.x0 < bounds.x1 && bounds.x0 < moved.x1 && moved.y0 < bounds.y1 && bounds.y0 < moved.y1
+    })
 }
 
 /// A conservative pixel region for a slide whose only change is translating one plain shape or
@@ -394,6 +438,7 @@ impl Textures {
         gif_times: &[(ShapeId, f64)],
         editing_text: Option<ShapeId>,
         anim: Option<(&deckcraft_anim::Timeline, f64)>,
+        dragging_shape: Option<ShapeId>,
     ) -> Option<(TextureHandle, Region)> {
         let slide = p.slides.get(index)?.clone();
         let master = master_of(p, &slide);
@@ -446,12 +491,39 @@ impl Textures {
             want,
             editing_text,
         };
+        let t0 = crate::now_ms();
+        if let Some(preview) = self.drag_preview.as_ref() {
+            let mut comparable = key.clone();
+            comparable.slide = preview.key.slide;
+            let moved = moved_shape(&preview.slide, &slide);
+            let preview_target = moved.map(|(shape_index, _, new_xfrm)| (shape_index, new_xfrm)).or_else(|| {
+                if preview.slide.as_ref() != slide.as_ref() {
+                    return None;
+                }
+                slide.shapes.iter().enumerate().find(|(_, shape)| shape.id == preview.shape).and_then(|(i, shape)| shape.xfrm.map(|xfrm| (i, xfrm)))
+            });
+            if let Some(selected) = dragging_shape
+                && comparable == preview.key
+                && same(&preview.master, &master)
+                && let Some((shape_index, new_xfrm)) = preview_target
+                && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected && shape.id == preview.shape)
+                && !later_shapes_overlap(&slide, shape_index, new_xfrm)
+                && let Some(entry) = self.canvas.as_ref()
+            {
+                if let Some(preview) = self.drag_preview.as_mut() {
+                    preview.rect = shape_overlay_rect(new_xfrm);
+                }
+                self.last_render_ms = crate::now_ms() - t0;
+                return Some((entry.tex.clone(), entry.region));
+            }
+            self.drag_preview = None;
+        }
         if let Some(e) = &self.canvas
             && e.key == key
+            && dragging_shape.is_none()
         {
             return Some((e.tex.clone(), e.region));
         }
-        let t0 = crate::now_ms();
         let render = |region: Region, skip: &[ShapeId]| {
             let state_of = |id: ShapeId| anim.map(|(tl, time)| crate::preview::shape_state_at(tl, id, time)).unwrap_or_default();
             let state: Option<&dyn Fn(ShapeId) -> deckcraft_render::ShapeState> = if anim.is_some() { Some(&state_of) } else { None };
@@ -469,6 +541,72 @@ impl Textures {
             };
             deckcraft_render::render_slide_drawn(p, index, &opts)
         };
+        let preview_target = dragging_shape.and_then(|selected| {
+            if let Some((shape_index, _, new_xfrm)) = movement
+                && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected)
+            {
+                return Some((shape_index, new_xfrm));
+            }
+            self.canvas.as_ref().and_then(|entry| {
+                let mut comparable = key.clone();
+                comparable.slide = entry.key.slide;
+                if entry.key != comparable || !same(&entry._master, &master) || entry._slide.as_ref() != slide.as_ref() {
+                    return None;
+                }
+                let (shape_index, shape) = slide.shapes.iter().enumerate().find(|(_, shape)| shape.id == selected)?;
+                if !drag_shape_is_simple(shape) {
+                    return None;
+                }
+                Some((shape_index, shape.xfrm?))
+            })
+        });
+        if anim.is_none()
+            && gif_times.is_empty()
+            && editing_text.is_none()
+            && let Some(selected) = dragging_shape
+            && let Some((shape_index, new_xfrm)) = preview_target
+            && slide.shapes.get(shape_index).is_some_and(|shape| shape.id == selected)
+            && !later_shapes_overlap(&slide, shape_index, new_xfrm)
+            && let Some((entry_key, entry_slide, entry_master, region)) = self.canvas.as_ref().and_then(|entry| {
+                let mut comparable = key.clone();
+                comparable.slide = entry.key.slide;
+                (entry.key == comparable && same(&entry._master, &master))
+                    .then(|| (entry.key.clone(), entry._slide.clone(), entry._master.clone(), entry.region))
+            })
+        {
+            let bounds = new_xfrm.bounds().inflate(8.0, 8.0);
+            if bounds.is_finite() && bounds.width() * scale <= 2048.0 && bounds.height() * scale <= 2048.0 {
+                let (base, _) = render(region, &[selected]);
+                if base.width == region.w
+                    && base.height == region.h
+                    && let Some(overlay) = deckcraft_render::render_shapes(p, &slide, &[selected], scale)
+                    && let Some(entry) = self.canvas.as_mut()
+                {
+                    replace_editor(ctx, &mut entry.tex, to_color_image(&base, grayscale));
+                    let texture = upload_editor(ctx, format!("slide-drag-overlay-{}", selected.0), to_color_image(&overlay, grayscale));
+                    let comparison = std::env::var_os("DECKCRAFT_GPU_DIFF_CHECK").map(|_| DragComparison {
+                        base: base.clone(),
+                        overlay: overlay.clone(),
+                        region,
+                        scale,
+                    });
+                    entry.key = entry_key.clone();
+                    entry._slide = entry_slide.clone();
+                    self.drag_preview = Some(GpuDragPreview {
+                        key: entry_key,
+                        shape: selected,
+                        slide: entry_slide,
+                        master: entry_master,
+                        texture,
+                        rect: shape_overlay_rect(new_xfrm),
+                        comparison,
+                    });
+                    self.canvas_renders += 1;
+                    self.last_render_ms = crate::now_ms() - t0;
+                    return Some((entry.tex.clone(), entry.region));
+                }
+            }
+        }
         if anim.is_none()
             && gif_times.is_empty()
             && editing_text.is_none()
@@ -534,9 +672,22 @@ impl Textures {
     /// Force the canvas to re-render next time (fonts loaded, theme changed in place…).
     pub fn invalidate(&mut self) {
         self.canvas = None;
+        self.drag_preview = None;
         self.estimate = None;
         self.drawn = None;
         self.thumbs.clear();
+    }
+
+    /// Texture and slide-space bounds of the active one-shape GPU-composited drag preview.
+    pub fn drag_preview(&self) -> Option<(TextureHandle, [f64; 4])> {
+        self.drag_preview.as_ref().map(|preview| (preview.texture.clone(), preview.rect))
+    }
+
+    /// The CPU-rendered texture layers used by the native GPU comparison journey.
+    pub fn drag_preview_layers(&self) -> Option<(Image, Image, [f64; 4], Region, f64)> {
+        let preview = self.drag_preview.as_ref()?;
+        let comparison = preview.comparison.as_ref()?;
+        Some((comparison.base.clone(), comparison.overlay.clone(), preview.rect, comparison.region, comparison.scale))
     }
 
     /// A thumbnail texture; renders at most `budget` new thumbnails per frame. Over budget it
@@ -641,6 +792,23 @@ mod tests {
         let r = Rect::from_min_size(pos2(3.0, 4.0), vec2(10.0, 12.0));
         assert_eq!(device_pixel_rect(r, 0.0), r);
         assert_eq!(device_pixel_rect(r, f32::NAN), r);
+    }
+
+    #[test]
+    fn a_drag_layer_falls_back_when_it_would_cover_a_later_shape() {
+        use deckcraft_geom::Xfrm;
+        use deckcraft_model::{Shape, ShapeId, Slide};
+
+        let slide = Slide {
+            shapes: vec![
+                Shape { id: ShapeId(1), xfrm: Some(Xfrm::new(0.0, 0.0, 20.0, 20.0)), ..Default::default() },
+                Shape { id: ShapeId(2), xfrm: Some(Xfrm::new(25.0, 0.0, 20.0, 20.0)), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let moved = Xfrm::new(0.0, 0.0, 20.0, 20.0);
+        assert!(super::later_shapes_overlap(&slide, 0, moved));
+        assert!(!super::later_shapes_overlap(&slide, 1, moved));
     }
 
     #[test]

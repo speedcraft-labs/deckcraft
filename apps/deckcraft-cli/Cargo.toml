@@ -18,6 +18,10 @@ deckcraft-engine = { workspace = true }
 deckcraft-mcp = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 egui = { workspace = true }
+egui-wgpu = { workspace = true }
+wgpu = { workspace = true, features = ["vulkan"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+pollster = "0.4"
 serde_json = { workspace = true }
 sha2 = "0.10"
 

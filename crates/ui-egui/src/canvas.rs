@@ -258,12 +258,31 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let pixel = vec2(slide_rect.width() / px.0 as f32, slide_rect.height() / px.1 as f32);
     let visible = visible_region(avail, slide_rect, pixel);
     let typing_into = st.and_then(|d| d.selection.text.as_ref()).filter(|t| !t.notes).map(|t| t.shape);
+    let dragging_shape = app
+        .session
+        .tool
+        .dragging()
+        .then(|| st.and_then(|d| (d.selection.target == Target::Slides && d.selection.shapes.len() == 1).then(|| d.selection.shapes[0])))
+        .flatten();
     let tex = match st.map(|d| (d.selection.target, d)) {
         Some((Target::Slides, d)) => {
             let idx = d.selection.slide;
             let doc = d.doc.clone();
             let frame = anim.as_ref().map(|(tl, t)| (tl, *t));
-            app.textures.slide(ui.ctx(), &doc, idx, px, visible, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times, typing_into, frame)
+            app.textures.slide(
+                ui.ctx(),
+                &doc,
+                idx,
+                px,
+                visible,
+                true,
+                crate::media::gif_key(&gifs),
+                app.ui.grayscale,
+                &times,
+                typing_into,
+                frame,
+                dragging_shape,
+            )
         }
         Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible, typing_into),
         Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible, typing_into),
@@ -279,6 +298,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         );
         app.canvas_region = Some(at);
         painter.image(tex.id(), at, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+    if let Some((overlay, rect)) = app.textures.drag_preview() {
+        let min = xf.to_screen(Point::new(rect[0], rect[1]));
+        let max = xf.to_screen(Point::new(rect[2], rect[3]));
+        painter.image(overlay.id(), Rect::from_min_max(min, max), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     app.perf.render_ms = app.textures.last_render_ms;
     media_frames(app, &painter, xf);

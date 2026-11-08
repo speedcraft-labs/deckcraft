@@ -73,6 +73,8 @@ zip = { version = "3", default-features = false, features = ["deflate"] }
 egui = { version = "0.37", default-features = false }
 egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
+egui-wgpu = { version = "0.37", default-features = false }
+wgpu = { version = "30.0.1", default-features = false }
 egui_kittest = "0.37"
 web-time = "1.1"
 rfd = "0.17"

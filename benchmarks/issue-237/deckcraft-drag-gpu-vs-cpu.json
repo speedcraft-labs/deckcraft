@@ -1,0 +1,258 @@
+{
+  "schema_version": 2,
+  "name": "deckcraft / deckcraft.drag-shape.heavy-slide",
+  "revs": {
+    "old": "app:dc2f1e4a0c626a444b2e499369323e20ee5053a2;craft-libs:f2532caaa253f8354c9f4e1994b9689791c447a7",
+    "new": "app:3717773043ec0c0cd4be761bfb2adee8d422b5b2;craft-libs:5304bb09de47b9c8b13f4772abde3ff11da77b17"
+  },
+  "fingerprint": {
+    "os": "linux",
+    "arch": "x86_64",
+    "kernel": "Linux 6.12.115+deb13.1-cloud-amd64",
+    "cpu_model": "AMD Ryzen 9 5900XT 16-Core Processor",
+    "logical_cores": 6,
+    "isolation_mode": true,
+    "allowed_cpu_list": "22-27",
+    "physical_cores": 28,
+    "ram_bytes": 92724637696,
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "profile": "release",
+    "opt_level": "3",
+    "debug_assertions": false,
+    "date": "2026-11-08T12:35:00+00:00"
+  },
+  "gpu_adapters": [
+    "NVIDIA GeForce RTX 2080 Ti"
+  ],
+  "prefix_cache": null,
+  "config": {
+    "requested_repetitions": 10,
+    "runs_per_side": 10,
+    "warmup_runs": 2,
+    "resamples": 2000,
+    "seed": 12648430,
+    "output_checked": true,
+    "cpu_time": "process"
+  },
+  "guard": {
+    "contended": false,
+    "reasons": [],
+    "load_before": 0.0,
+    "load_after": 0.009900990099009901,
+    "logical_cores": 6,
+    "max_load_per_core": 0.5,
+    "load_threshold": 3.0,
+    "throttle_before": {
+      "speed_limit_pct": null,
+      "throttle_count": null
+    },
+    "throttle_after": {
+      "speed_limit_pct": null,
+      "throttle_count": null
+    }
+  },
+  "contended": false,
+  "publishable": true,
+  "inputs": [
+    {
+      "name": "HowWeRefactor-slide-24",
+      "wall": {
+        "old": {
+          "n": 10,
+          "median_ns": 12673497.0,
+          "mad_ns": 1292541.5,
+          "min_ns": 11053115.0,
+          "max_ns": 17062070.0
+        },
+        "new": {
+          "n": 10,
+          "median_ns": 1543896.0,
+          "mad_ns": 296886.0,
+          "min_ns": 1152066.0,
+          "max_ns": 2527011.0
+        },
+        "ratio": {
+          "point": 0.12182083603286449,
+          "ci_lo": 0.08684513945701375,
+          "ci_hi": 0.1884258391609517
+        }
+      },
+      "cpu": {
+        "old": {
+          "n": 10,
+          "median_ns": 340393.5,
+          "mad_ns": 23839.5,
+          "min_ns": 308069.0,
+          "max_ns": 3395719.0
+        },
+        "new": {
+          "n": 10,
+          "median_ns": 403876.5,
+          "mad_ns": 23752.5,
+          "min_ns": 352321.0,
+          "max_ns": 491961.0
+        },
+        "ratio": {
+          "point": 1.1864988608771907,
+          "ci_lo": 1.0614043805453872,
+          "ci_hi": 1.3153703919131559
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "inputs": 1,
+    "wall": {
+      "point": 0.1218208360328645,
+      "ci_lo": 0.08684513945701373,
+      "ci_hi": 0.1884258391609517
+    },
+    "cpu": {
+      "point": 1.1864988608771907,
+      "ci_lo": 1.0614043805453872,
+      "ci_hi": 1.3153703919131559
+    }
+  },
+  "runs": [
+    {
+      "order": 0,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1270781,
+      "cpu_ns": 384481
+    },
+    {
+      "order": 1,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 12736621,
+      "cpu_ns": 326654
+    },
+    {
+      "order": 2,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 12610373,
+      "cpu_ns": 390854
+    },
+    {
+      "order": 3,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 2361466,
+      "cpu_ns": 491961
+    },
+    {
+      "order": 4,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 11713105,
+      "cpu_ns": 362238
+    },
+    {
+      "order": 5,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 2527011,
+      "cpu_ns": 450013
+    },
+    {
+      "order": 6,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 2438351,
+      "cpu_ns": 436179
+    },
+    {
+      "order": 7,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 11708796,
+      "cpu_ns": 334287
+    },
+    {
+      "order": 8,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1152066,
+      "cpu_ns": 390716
+    },
+    {
+      "order": 9,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 12145112,
+      "cpu_ns": 346500
+    },
+    {
+      "order": 10,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 11053115,
+      "cpu_ns": 308069
+    },
+    {
+      "order": 11,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1223239,
+      "cpu_ns": 352321
+    },
+    {
+      "order": 12,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 17062070,
+      "cpu_ns": 313668
+    },
+    {
+      "order": 13,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1479377,
+      "cpu_ns": 375767
+    },
+    {
+      "order": 14,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1352514,
+      "cpu_ns": 423163
+    },
+    {
+      "order": 15,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 15462973,
+      "cpu_ns": 3395719
+    },
+    {
+      "order": 16,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 16257807,
+      "cpu_ns": 366228
+    },
+    {
+      "order": 17,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1752252,
+      "cpu_ns": 395540
+    },
+    {
+      "order": 18,
+      "input": "HowWeRefactor-slide-24",
+      "side": "new",
+      "wall_ns": 1608415,
+      "cpu_ns": 412213
+    },
+    {
+      "order": 19,
+      "input": "HowWeRefactor-slide-24",
+      "side": "old",
+      "wall_ns": 15103292,
+      "cpu_ns": 328477
+    }
+  ]
+}
