@@ -63,6 +63,8 @@ pub struct Textures {
     /// How far the canvas slide's shapes reach (from their boxes), for the slide and master `Arc`s
     /// held (kept alive so their addresses can't be reused).
     estimate: Option<(Arc<Slide>, Option<Arc<Master>>, Rect)>,
+    #[cfg(test)]
+    extent_scans: u64,
     /// How far the last canvas render of a slide (by index) actually drew: text spilling out of
     /// its box shows there.
     drawn: Option<(usize, Rect)>,
@@ -445,11 +447,14 @@ impl Textures {
         let scale = size.0 as f64 / p.slide_size.width.max(1.0);
         let movement = self.canvas.as_ref().and_then(|entry| same(&entry._master, &master).then(|| moved_shape(&entry._slide, &slide)).flatten());
         let cached_estimate = self.estimate.as_ref().map(|(s, m, r)| (s.clone(), m.clone(), *r));
-        let reusable_extent = match (&cached_estimate, movement) {
-            (Some((cached_slide, cached_master, extent)), Some((_, _, new_xfrm)))
-                if self.canvas.as_ref().is_some_and(|entry| Arc::ptr_eq(cached_slide, &entry._slide))
-                    && same(cached_master, &master)
-                    && extent.x0 == 0.0
+        // The GPU preview keeps the original canvas slide throughout a drag, while the extent
+        // cache follows each frame. Compare against the slide whose extent we actually cached.
+        let estimate_movement = cached_estimate
+            .as_ref()
+            .and_then(|(cached_slide, cached_master, _)| same(cached_master, &master).then(|| moved_shape(cached_slide, &slide)).flatten());
+        let reusable_extent = match (&cached_estimate, estimate_movement) {
+            (Some((_, _, extent)), Some((_, _, new_xfrm)))
+                if extent.x0 == 0.0
                     && extent.y0 == 0.0
                     && extent.x1 == p.slide_size.width
                     && extent.y1 == p.slide_size.height
@@ -470,6 +475,10 @@ impl Textures {
                 extent
             }
             _ => {
+                #[cfg(test)]
+                {
+                    self.extent_scans += 1;
+                }
                 let extent = deckcraft_render::slide_extent(p, index);
                 self.estimate = Some((slide.clone(), master.clone(), extent));
                 extent
@@ -809,6 +818,37 @@ mod tests {
         let moved = Xfrm::new(0.0, 0.0, 20.0, 20.0);
         assert!(super::later_shapes_overlap(&slide, 0, moved));
         assert!(!super::later_shapes_overlap(&slide, 1, moved));
+    }
+
+    #[test]
+    fn consecutive_drag_frames_reuse_the_previous_frames_extent() {
+        use deckcraft_color::SchemeSlot;
+        use deckcraft_geom::Xfrm;
+        use deckcraft_model::{Line, Presentation, Shape, ShapeId, ShapeStyle};
+        use std::sync::Arc;
+
+        let mut p = Presentation::default();
+        Arc::make_mut(&mut p.slides[0]).shapes = vec![Shape {
+            id: ShapeId(42),
+            xfrm: Some(Xfrm::new(24.0, 30.0, 120.0, 90.0)),
+            line: Some(Line::none()),
+            style: Some(ShapeStyle::accent(SchemeSlot::Accent1)),
+            effects: Some(Default::default()),
+            ..Default::default()
+        }];
+        let ctx = egui::Context::default();
+        let viewport = deckcraft_render::Region::slide(960, 540);
+        let mut textures = super::Textures::default();
+        assert!(textures.slide(&ctx, &p, 0, (960, 540), viewport, true, 0, false, &[], None, None, None).is_some());
+        for _ in 0..4 {
+            Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm.as_mut().unwrap().x += 3.0;
+            assert!(textures.slide(&ctx, &p, 0, (960, 540), viewport, true, 0, false, &[], None, None, Some(ShapeId(42))).is_some());
+        }
+        assert_eq!(textures.extent_scans, 1, "translations inside the slide need no new bounds scan");
+
+        Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm.as_mut().unwrap().x = 1000.0;
+        assert!(textures.slide(&ctx, &p, 0, (960, 540), viewport, true, 0, false, &[], None, None, Some(ShapeId(42))).is_some());
+        assert_eq!(textures.extent_scans, 2, "moving outside the slide must recompute its reach");
     }
 
     #[test]
