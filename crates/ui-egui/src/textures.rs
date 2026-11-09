@@ -451,7 +451,9 @@ impl Textures {
         // cache follows each frame. Compare against the slide whose extent we actually cached.
         let estimate_movement = cached_estimate
             .as_ref()
-            .and_then(|(cached_slide, cached_master, _)| same(cached_master, &master).then(|| moved_shape(cached_slide, &slide)).flatten());
+            .and_then(|(cached_slide, cached_master, _)| {
+                (!Arc::ptr_eq(cached_slide, &slide) && same(cached_master, &master)).then(|| moved_shape(cached_slide, &slide)).flatten()
+            });
         let reusable_extent = match (&cached_estimate, estimate_movement) {
             (Some((_, _, extent)), Some((_, _, new_xfrm)))
                 if extent.x0 == 0.0
