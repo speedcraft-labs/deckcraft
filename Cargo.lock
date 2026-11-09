@@ -893,7 +893,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/speedcraft-labs/craft-libs?rev=20cc6894fc3acf56042ab2b5144642ead4e487bd#20cc6894fc3acf56042ab2b5144642ead4e487bd"
+source = "git+https://github.com/storytold/craft-libs?rev=1b34eba41e62138fc2438d2734523b302840b45d#1b34eba41e62138fc2438d2734523b302840b45d"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -901,7 +901,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=1b34eba41e62138fc2438d2734523b302840b45d#1b34eba41e62138fc2438d2734523b302840b45d"
+source = "git+https://github.com/speedcraft-labs/craft-libs?rev=20cc6894fc3acf56042ab2b5144642ead4e487bd#20cc6894fc3acf56042ab2b5144642ead4e487bd"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -1096,7 +1096,7 @@ dependencies = [
 name = "deckcraft-bitstream"
 version = "0.15.0"
 dependencies = [
- "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7)",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=1b34eba41e62138fc2438d2734523b302840b45d)",
 ]
 
 [[package]]
@@ -1193,14 +1193,14 @@ dependencies = [
 name = "deckcraft-isobmff"
 version = "0.15.0"
 dependencies = [
- "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7)",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=1b34eba41e62138fc2438d2734523b302840b45d)",
 ]
 
 [[package]]
 name = "deckcraft-matroska"
 version = "0.15.0"
 dependencies = [
- "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7)",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=1b34eba41e62138fc2438d2734523b302840b45d)",
 ]
 
 [[package]]
