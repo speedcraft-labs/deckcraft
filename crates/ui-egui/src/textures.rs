@@ -812,6 +812,37 @@ mod tests {
     }
 
     #[test]
+    fn a_drag_starting_at_rest_keeps_the_editable_slide_unique() {
+        use deckcraft_color::SchemeSlot;
+        use deckcraft_geom::Xfrm;
+        use deckcraft_model::{Line, Presentation, Shape, ShapeId, ShapeStyle};
+        use std::sync::Arc;
+
+        let mut p = Presentation::default();
+        Arc::make_mut(&mut p.slides[0]).shapes = vec![Shape {
+            id: ShapeId(42),
+            xfrm: Some(Xfrm::new(24.0, 30.0, 120.0, 90.0)),
+            line: Some(Line::none()),
+            style: Some(ShapeStyle::accent(SchemeSlot::Accent1)),
+            effects: Some(Default::default()),
+            ..Default::default()
+        }];
+        let ctx = egui::Context::default();
+        let viewport = deckcraft_render::Region::slide(960, 540);
+        let mut textures = super::Textures::default();
+        assert!(textures.slide(&ctx, &p, 0, (960, 540), viewport, true, 0, false, &[], None, None, None).is_some());
+        // Match a pointer gesture: its first frame has not moved, and it can return to its origin.
+        Arc::make_mut(&mut p.slides[0]);
+        let editable = Arc::as_ptr(&p.slides[0]);
+        for offset in [0.0, 3.0, 6.0, 0.0, 9.0] {
+            Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm.as_mut().unwrap().x = 24.0 + offset;
+            assert!(textures.slide(&ctx, &p, 0, (960, 540), viewport, true, 0, false, &[], None, None, Some(ShapeId(42))).is_some());
+            assert_eq!(Arc::strong_count(&p.slides[0]), 1, "the next pointer update must not clone the entire slide");
+            assert_eq!(Arc::as_ptr(&p.slides[0]), editable, "translations must mutate the same editable slide");
+        }
+    }
+
+    #[test]
     fn translating_one_shape_and_patching_its_dirty_region_matches_a_full_render() {
         use deckcraft_color::SchemeSlot;
         use deckcraft_geom::Xfrm;
