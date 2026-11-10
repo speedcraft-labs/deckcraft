@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use deckcraft_geom::Rect;
+use deckcraft_geom::{Rect, Size};
 use deckcraft_model::style::Fill;
 use deckcraft_model::{Geom, Master, Presentation, ShapeId, ShapeKind, Slide};
 use deckcraft_render::{Image, Region, RenderOpts};
@@ -61,8 +61,8 @@ pub struct Textures {
     canvas: Option<Entry>,
     drag_preview: Option<GpuDragPreview>,
     /// How far the canvas slide's shapes reach (from their boxes), for the slide and master `Arc`s
-    /// held (kept alive so their addresses can't be reused).
-    estimate: Option<(Arc<Slide>, Option<Arc<Master>>, Rect)>,
+    /// held (kept alive so their addresses can't be reused), at this page size.
+    estimate: Option<(Arc<Slide>, Option<Arc<Master>>, Size, Rect)>,
     /// How far the last canvas render of a slide (by index) actually drew: text spilling out of
     /// its box shows there.
     drawn: Option<(usize, Rect)>,
@@ -444,34 +444,37 @@ impl Textures {
         let master = master_of(p, &slide);
         let scale = size.0 as f64 / p.slide_size.width.max(1.0);
         let movement = self.canvas.as_ref().and_then(|entry| same(&entry._master, &master).then(|| moved_shape(&entry._slide, &slide)).flatten());
-        let cached_estimate = self.estimate.as_ref().map(|(s, m, r)| (s.clone(), m.clone(), *r));
+        let cached_estimate = self.estimate.as_ref().map(|(s, m, page, r)| (s.clone(), m.clone(), *page, *r));
         let reusable_extent = match (&cached_estimate, movement) {
-            (Some((cached_slide, cached_master, extent)), Some((_, _, new_xfrm)))
-                if self.canvas.as_ref().is_some_and(|entry| Arc::ptr_eq(cached_slide, &entry._slide))
+            (Some((cached_slide, cached_master, page, extent)), Some((_, _, new_xfrm)))
+                if *page == p.slide_size
+                    && self.canvas.as_ref().is_some_and(|entry| Arc::ptr_eq(cached_slide, &entry._slide))
                     && same(cached_master, &master)
-                    && extent.x0 == 0.0
-                    && extent.y0 == 0.0
-                    && extent.x1 == p.slide_size.width
-                    && extent.y1 == p.slide_size.height
-                    && new_xfrm.bounds().x0 >= 0.0
-                    && new_xfrm.bounds().y0 >= 0.0
-                    && new_xfrm.bounds().x1 <= p.slide_size.width
-                    && new_xfrm.bounds().y1 <= p.slide_size.height =>
+                    && new_xfrm.bounds().x0 >= extent.x0
+                    && new_xfrm.bounds().y0 >= extent.y0
+                    && new_xfrm.bounds().x1 <= extent.x1
+                    && new_xfrm.bounds().y1 <= extent.y1 =>
             {
                 Some(*extent)
             }
             _ => None,
         };
         let estimate = match cached_estimate {
-            Some((cached_slide, cached_master, extent)) if Arc::ptr_eq(&cached_slide, &slide) && same(&cached_master, &master) => extent,
-            Some(_) if reusable_extent.is_some() => {
-                let extent = reusable_extent.unwrap_or_default();
-                self.estimate = Some((slide.clone(), master.clone(), extent));
+            Some((cached_slide, cached_master, page, extent))
+                if page == p.slide_size
+                    && same(&cached_master, &master)
+                    && (Arc::ptr_eq(&cached_slide, &slide) || (movement.is_none() && cached_slide.as_ref() == slide.as_ref())) =>
+            {
                 extent
+            }
+            Some(_) if reusable_extent.is_some() => {
+                // The baseline still contains this translation. Retaining the current editable
+                // slide here would make Arc::make_mut copy the whole slide on every pointer frame.
+                reusable_extent.unwrap_or_default()
             }
             _ => {
                 let extent = deckcraft_render::slide_extent(p, index);
-                self.estimate = Some((slide.clone(), master.clone(), extent));
+                self.estimate = Some((slide.clone(), master.clone(), p.slide_size, extent));
                 extent
             }
         };
@@ -827,6 +830,13 @@ mod tests {
             effects: Some(Default::default()),
             ..Default::default()
         }];
+        // An unchanged off-slide shape makes the cached extent wider than the page.
+        Arc::make_mut(&mut p.slides[0]).shapes.push(Shape {
+            id: ShapeId(43),
+            xfrm: Some(Xfrm::new(1000.0, 30.0, 120.0, 90.0)),
+            line: Some(Line::none()),
+            ..Default::default()
+        });
         let ctx = egui::Context::default();
         let viewport = deckcraft_render::Region::slide(960, 540);
         let mut textures = super::Textures::default();
@@ -840,6 +850,12 @@ mod tests {
             assert_eq!(Arc::strong_count(&p.slides[0]), 1, "the next pointer update must not clone the entire slide");
             assert_eq!(Arc::as_ptr(&p.slides[0]), editable, "translations must mutate the same editable slide");
         }
+        // Equal slide contents do not make an extent valid after the page itself grows.
+        Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm.as_mut().unwrap().x = 24.0;
+        p.slide_size.width = 1280.0;
+        let wider = deckcraft_render::Region::slide(1280, 540);
+        assert!(textures.slide(&ctx, &p, 0, (1280, 540), wider, true, 0, false, &[], None, None, None).is_some());
+        assert!(textures.estimate.as_ref().unwrap().3.x1 >= 1280.0, "the cached bounds must include the resized page");
     }
 
     #[test]
