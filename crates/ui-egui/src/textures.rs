@@ -302,7 +302,7 @@ fn moved_shape(old: &Slide, new: &Slide) -> Option<(usize, deckcraft_geom::Xfrm,
             return None;
         }
     }
-    let Some(index) = changed else { return None };
+    let index = changed?;
     Some((index, old.shapes[index].xfrm?, new.shapes[index].xfrm?))
 }
 
