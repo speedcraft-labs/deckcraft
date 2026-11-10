@@ -629,6 +629,7 @@ impl Textures {
                 entry.tex.set_partial(pos, to_color_image(&img, grayscale), editor_texture_options());
                 entry.key = key;
                 entry._slide = slide;
+                self.estimate = Some((entry._slide.clone(), entry._master.clone(), p.slide_size, estimate));
                 self.canvas_renders += 1;
                 self.last_render_ms = crate::now_ms() - t0;
                 return Some((entry.tex.clone(), entry.region));
@@ -657,6 +658,9 @@ impl Textures {
             }
             None => upload_editor(ctx, "slide-canvas", ci),
         };
+        // An unchanged warm-up can replace the canvas with an equal clone. Keep its extent
+        // on the same snapshot so later translations do not retain the editable slide instead.
+        self.estimate = Some((slide.clone(), master.clone(), p.slide_size, estimate));
         self.canvas = Some(Entry { key, tex: tex.clone(), region, _slide: slide, _master: master, stamp: 0 });
         Some((tex, region))
     }
