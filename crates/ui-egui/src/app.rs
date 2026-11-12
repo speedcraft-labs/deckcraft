@@ -48,6 +48,7 @@ impl SlideApp {
             ui: UiState::default(),
             textures: textures::Textures::default(),
             control_rx: None,
+            raise_without_focus: None,
             squiggles: Default::default(),
             dialog: None,
             thesaurus_query: String::new(),
