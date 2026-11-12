@@ -7,7 +7,7 @@ use deckcraft_color::SchemeSlot;
 use deckcraft_geom::{Xfrm, preset};
 use deckcraft_model::style::{ColorRef, Effects, Fill};
 use deckcraft_model::table::{Cell, Row, Table};
-use deckcraft_model::text::{Anchor, TextBody, TextDir};
+use deckcraft_model::text::{Anchor, TextDir};
 use deckcraft_model::{Geom, MediaClip, PhType, Placeholder, Shape, ShapeId, ShapeKind, ShapeStyle};
 
 use super::{Imp, Part, dml};
@@ -434,11 +434,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             return s;
         }
         if let Some(c) = gd.child("chart")
-            && let Some(rel) = part.rels.get(c.attr("r:id").unwrap_or(""))
-            && let Some(bytes) = imp.pkg.xml_bytes(&rel.target)
-            && let Some(mut chart) = if uri.ends_with("/chartex") { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }
+            && let Some(chart) = super::chart::frame_chart(imp, part, c.attr("r:id").unwrap_or(""), uri)
         {
-            chart.kept = super::chart::capture_kept(imp, &rel.target);
             s.kind = ShapeKind::Chart(Box::new(chart));
             return s;
         }
@@ -573,39 +570,21 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let rel_ids = gd.child("relIds")?;
     let dm = part.rels.get(rel_ids.attr("r:dm").unwrap_or(""))?;
     let data = imp.pkg.xml(&dm.target)?;
-    // PowerPoint and LibreOffice put the cached drawing relationship on the slide. Prefer that
-    // exact `dsp:drawing` snapshot when present; only synthesize a simple visual fallback when a
-    // package has no cached drawing or its drawing tree is empty.
+    let drawing_rel = data.root.find("dataModelExt").and_then(|x| x.attr("relId")).and_then(|id| part.rels.get(id)).map(|r| r.target.clone())?;
+    let mut d = imp.pkg.xml(&drawing_rel)?;
+    super::resolve_mc(&mut d.root, 0);
+    let dpart = Part::new(imp.pkg, &drawing_rel, &d);
+    let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
-    let outline = diagram_outline(imp, part, rel_ids, &data.root);
-    let children = data
-        .root
-        .find("dataModelExt")
-        .and_then(|x| x.attr("relId"))
-        .and_then(|id| part.rels.get(id))
-        .and_then(|rel| {
-            imp.pkg.xml(&rel.target).map(|mut d| {
-                super::resolve_mc(&mut d.root, 0);
-                let dpart = Part::new(imp.pkg, &rel.target, &d);
-                d.root
-                    .child("spTree")
-                    .map(|tree| {
-                        let parsed = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
-                        smartart_text_rects(imp, &mut sub, tree, parsed, depth + 1)
-                    })
-                    .unwrap_or_default()
-            })
-        })
-        .unwrap_or_default();
-    let children =
-        if children.is_empty() { outline.as_ref().map_or_else(Vec::new, |d| smartart_fallback(imp, &mut sub, frame, d)) } else { children };
+    let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
     if children.is_empty() {
         return None;
     }
+    let children = smartart_text_rects(imp, &mut sub, tree, children, depth + 1);
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
     g.kind = ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, x.w, x.h) };
-    g.diagram = outline;
+    g.diagram = diagram_outline(imp, part, rel_ids, &data.root);
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
         let rels = imp.pkg.rels(&dm.target);
@@ -618,36 +597,6 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
         }
     }
     Some(g)
-}
-
-/// Visible emergency layout for a SmartArt data model with no cached `dsp:drawing` tree.
-/// PowerPoint-authored cached shapes always win above; these boxes keep the outline legible until
-/// a type-specific layout is available.
-fn smartart_fallback(imp: &mut Imp, ctx: &mut IdCtx, frame: &Shape, d: &deckcraft_model::Diagram) -> Vec<Shape> {
-    let x = frame.xfrm.unwrap_or_default();
-    let nodes: Vec<_> = d.nodes.iter().filter(|n| !n.text.trim().is_empty()).collect();
-    if nodes.is_empty() || !x.is_finite() || x.w <= 0.0 || x.h <= 0.0 {
-        return Vec::new();
-    }
-    let h = x.h / nodes.len() as f64;
-    nodes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, n)| {
-            let indent = (n.level as f64 * 14.0).min(x.w * 0.35);
-            let w = x.w - indent;
-            (w > 1.0 && h > 1.0).then(|| Shape {
-                id: ctx.assign(imp, None),
-                name: format!("SmartArt fallback {}", i + 1),
-                kind: ShapeKind::Shape,
-                geom: Geom::preset("roundRect"),
-                xfrm: Some(Xfrm::new(indent, i as f64 * h, w, h * 0.88)),
-                fill: Some(Fill::Solid { color: ColorRef::scheme(SchemeSlot::Accent1) }),
-                text: Some(TextBody::from_text(n.text.trim())),
-                ..Default::default()
-            })
-        })
-        .collect()
 }
 
 /// A SmartArt drawing shape (`dsp:sp`) keeps its text rectangle in `dsp:txXfrm`, apart from the
