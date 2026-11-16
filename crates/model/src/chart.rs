@@ -231,8 +231,11 @@ pub struct Series {
     pub point_fills: Vec<(usize, Fill)>,
     pub data_labels: Option<bool>,
     /// Label components requested by `c:dLbls`; unset components use OOXML defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_category_name: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_percent: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_series_name: Option<bool>,
     /// Per-point label text explicitly stored in `c:dLbl/c:tx/c:rich`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
