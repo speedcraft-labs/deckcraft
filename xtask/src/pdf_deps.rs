@@ -73,10 +73,7 @@ fn validate(metadata: &Value) -> Result<(), String> {
         }
         matches.first().copied().ok_or_else(|| format!("missing {name}"))
     };
-    let allowed_sources = [
-        format!("git+{SHARED_REPO}?rev={SHARED_REV}#{SHARED_REV}"),
-        format!("git+{FORK_REPO}?rev={FORK_REV}#{FORK_REV}"),
-    ];
+    let allowed_sources = [format!("git+{SHARED_REPO}?rev={SHARED_REV}#{SHARED_REV}"), format!("git+{FORK_REPO}?rev={FORK_REV}#{FORK_REV}")];
     for (name, version, expected_source, expected_features) in [
         ("craft-pdf", "0.1.0", allowed_sources.to_vec(), vec!["write", "write-simple-text"]),
         ("krilla", "0.8.2", allowed_sources.to_vec(), vec!["raster-images", "rayon", "simple-text"]),
