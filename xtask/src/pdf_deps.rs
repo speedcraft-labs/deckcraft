@@ -7,7 +7,9 @@ use std::process::Command;
 use serde_json::Value;
 
 const SHARED_REPO: &str = "https://github.com/storytold/craft-libs";
-const SHARED_REV: &str = "6e03f65bf45181db77ba6229716e6624db9eb25b";
+const SHARED_REV: &str = "63196e66f3033a6623eb629af95a104d26986725";
+const FORK_REPO: &str = "https://github.com/speedcraft-labs/craft-libs";
+const FORK_REV: &str = "2f340cdf26c187e4905e13a10414c77524a6cb10";
 const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
 pub fn run(root: &Path) -> Result<(), String> {
@@ -71,15 +73,17 @@ fn validate(metadata: &Value) -> Result<(), String> {
         }
         matches.first().copied().ok_or_else(|| format!("missing {name}"))
     };
-    let source = format!("git+{SHARED_REPO}?rev={SHARED_REV}#{SHARED_REV}");
+    let allowed_sources = [format!("git+{SHARED_REPO}?rev={SHARED_REV}#{SHARED_REV}"), format!("git+{FORK_REPO}?rev={FORK_REV}#{FORK_REV}")];
     for (name, version, expected_source, expected_features) in [
-        ("craft-pdf", "0.1.0", source.as_str(), vec!["write", "write-simple-text"]),
-        ("krilla", "0.8.2", source.as_str(), vec!["raster-images", "rayon", "simple-text"]),
-        ("hayro-syntax", "0.7.2", REGISTRY, vec!["std"]),
+        ("craft-pdf", "0.1.0", allowed_sources.to_vec(), vec!["write", "write-simple-text"]),
+        ("krilla", "0.8.2", allowed_sources.to_vec(), vec!["raster-images", "rayon", "simple-text"]),
+        ("hayro-syntax", "0.7.2", vec![REGISTRY.to_owned()], vec!["std"]),
     ] {
         let package = one_package(name)?;
-        if package.get("version").and_then(Value::as_str) != Some(version) || package.get("source").and_then(Value::as_str) != Some(expected_source) {
-            return Err(format!("{name}: expected {version} from {expected_source}; got {package}"));
+        let source = package.get("source").and_then(Value::as_str);
+        let source_matches = source.is_some_and(|source| expected_source.iter().any(|allowed| allowed == source));
+        if package.get("version").and_then(Value::as_str) != Some(version) || !source_matches {
+            return Err(format!("{name}: expected {version} from one of {expected_source:?}; got {package}"));
         }
         let id = package.get("id").and_then(Value::as_str).ok_or_else(|| format!("{name}: missing package id"))?;
         let node = nodes.iter().find(|n| n.get("id").and_then(Value::as_str) == Some(id)).ok_or_else(|| format!("{name}: no resolved node"))?;
@@ -184,6 +188,15 @@ mod tests {
         let duplicate = m["packages"][2].clone();
         m["packages"].as_array_mut().unwrap().push(duplicate);
         assert!(validate(&m).is_err());
+    }
+
+    #[test]
+    fn accepts_the_current_speedcraft_craft_libs_pin() {
+        let mut m = metadata();
+        let source = format!("git+{FORK_REPO}?rev={FORK_REV}#{FORK_REV}");
+        m["packages"][1]["source"] = json!(source);
+        m["packages"][2]["source"] = json!(source);
+        assert!(validate(&m).is_ok());
     }
 
     #[test]

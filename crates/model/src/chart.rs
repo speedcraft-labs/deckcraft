@@ -231,8 +231,11 @@ pub struct Series {
     pub point_fills: Vec<(usize, Fill)>,
     pub data_labels: Option<bool>,
     /// Label components requested by `c:dLbls`; unset components use OOXML defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_category_name: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_percent: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub show_series_name: Option<bool>,
     /// Per-point label text explicitly stored in `c:dLbl/c:tx/c:rich`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -334,6 +337,10 @@ pub struct Chart {
     pub legend: Option<String>,
     /// `c:legend/c:overlay`: the legend is drawn over the plot instead of shrinking it.
     pub legend_overlay: bool,
+    /// `c:legend/c:legendEntry`: entries whose text has its own size, weight or colour, over
+    /// the legend's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub legend_entries: Vec<LegendEntry>,
     /// Text size in points of the axis labels and legend (from their `c:txPr`, else the chart's);
     /// `None`: the file gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -414,6 +421,21 @@ pub struct Chart {
     pub kept: ChartKept,
 }
 
+/// One legend entry's own text (`c:legendEntry/c:txPr`): what it sets wins over the legend's.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LegendEntry {
+    /// The entry's place in the legend, from 0 (`c:idx`).
+    pub idx: u32,
+    /// Text size in points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<ColorRef>,
+}
+
 /// One relationship of a chart part, with the target string as it was written.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -466,6 +488,7 @@ impl Default for Chart {
             series: vec![],
             legend: Some("b".into()),
             legend_overlay: false,
+            legend_entries: vec![],
             text_size: None,
             title_size: None,
             data_labels: false,
